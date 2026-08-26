@@ -29,7 +29,9 @@ mua whoami                       # 或: python3 scripts/cli.py whoami
 ```
 
 - 若提示"未配置凭证"，请用户在自己的终端运行 `mua setup` 完成一次性配置（AK/SK 保存到 `~/.mobile_use_agent/credentials.json`，权限 600；可同时保存默认手机）。
-- 若用户表示**尚未开通 Mobile Use Agent 服务 / 没有云手机资源**（或问"ProductId/PodId 在哪找"），引导其查看 README「开通与准备」——按官方指引依次完成：角色授权（ServiceRoleForIPaaS + 创建 PaasServiceRole）→ 开通服务 → 创建 MUA 业务（得 ProductId）→ 订购云手机资源（得 PodId）→ 获取 AK/SK。已开通过的用户无需此步骤。
+- 若用户表示**尚未开通 Mobile Use Agent 服务 / 没有云手机资源**（或问"ProductId/PodId 在哪找"），引导其查看 README「二、开始之前：一次性准备」——按官方四步指引依次完成：给云手机开权限（ServiceRoleForIPaaS + PaasServiceRole）→ 开通服务 → 创建业务（得 ProductId）→ 订购云手机资源（得 PodId）→ 创建密钥（得 AK/SK）。已开通过的用户无需此步骤。
+- 若任务目标是**云手机未预装的应用**（默认镜像只预装少量 App），先引导用户在 [MUA 控制台「发布 App」](https://www.volcengine.com/docs/6394/1223958?lang=zh) 安装到云手机，再执行任务。
+- 若任务执行中遇到**人脸识别验证**（如登录银行/支付类 App），引导用户用手机扫码完成验证（官方流程见 README「五、常见问题」）：云手机画面弹出二维码（或点"H5 扫码链接"）→ 手机扫码 → 手机端完成登录与人脸扫描 → 回控制台点"重新连接"。扫码期间云手机画面提示"连接异常"是正常现象。
 - 若依赖缺失，先执行 `pip install -r requirements.txt`。
 
 ## 执行用户请求的任务
@@ -69,7 +71,7 @@ mua whoami / mua device       # 凭证与默认手机状态
 
 ## 错误处理
 
-所有 API 错误统一转为 `MobileUseError`（错误码 + 中文描述 + 操作建议 + 分类）。认证类错误提示用户重新 `setup`；资源类错误提示检查 ProductId/PodId；`ErrAssumeRoleFailed` 提示完成跨服务授权——[授权 ServiceRoleForIPaaS](https://console.volcengine.com/iam/service/attach_role/?ServiceName=ipaas) 并创建 `PaasServiceRole` 角色（详见 README「开通与准备」）。完整错误码表和双通道捕获说明见 [references/error_codes.md](references/error_codes.md)。
+所有 API 错误统一转为 `MobileUseError`（错误码 + 中文描述 + 操作建议 + 分类）。认证类错误提示用户重新 `setup`；资源类错误提示检查 ProductId/PodId；`ErrAssumeRoleFailed` 提示完成跨服务授权——[授权 ServiceRoleForIPaaS](https://console.volcengine.com/iam/service/attach_role/?ServiceName=ipaas) 并创建 `PaasServiceRole` 角色（详见 README「二、开始之前」第 1 步）。完整错误码表和双通道捕获说明见 [references/error_codes.md](references/error_codes.md)。
 
 ## 编程式调用
 

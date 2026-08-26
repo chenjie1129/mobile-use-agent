@@ -1,23 +1,137 @@
-# Mobile Use Agent
+# Mobile Use Agent（云手机 AI 助手）
 
-在火山引擎**云手机**上执行 AI Agent 任务：让 AI 帮你操作 Android 手机里的 App——打开小红书搜索、下单、看地图、查桌面……支持一键全局命令 `mua`，配置一次，之后只需描述任务。
+让 AI 帮你操作一台"云端的安卓手机"：打开 App、搜索、下单、看地图……你说一句话，AI 在云手机里自动完成。不用自己装 App、不用盯屏幕，任务跑完把结果带给你。
 
-> 本包同时是**标准 WorkBuddy Skill**（`SKILL.md` 定义触发与工作流，WorkBuddy 可自动识别调用）、**独立 CLI 应用**，以及可嵌入你自有 Agent 的 **Python 工具库**（见下文「集成到你的 AI Agent」）。
+面向三类读者，各取所需：
 
-## 快速开始（三步）
+| 你是谁 | 看哪节 |
+|---|---|
+| 不想碰命令行，只想让 AI 帮干活 | [三、用起来 · 方式 A](#三用起来--方式-a推荐让-ai-直接帮你做) |
+| 愿意敲几行命令 | [四、用起来 · 方式 B](#四用起来--方式-b命令行三步) |
+| 有自己的 AI Agent，想接云手机能力 | [七、集成到你的 AI Agent](#七集成到你的-ai-agent开发者) |
+
+> 无论哪种方式，都需要先完成 [二、开始之前的一次性准备](#二开始之前一次性准备约-10-分钟)。
+
+---
+
+## 一、这是什么？
+
+Mobile Use Agent（简称 MUA）是火山引擎云手机上的一个 AI 助手。它像人一样"看着"云手机屏幕、点按、滑动、输入，帮你完成真实手机上的操作。
+
+可以做的事：
+
+- **打开 App 并搜索**：`打开小红书，搜索"咖啡"，把前 3 篇笔记的标题列出来`
+- **下单购物**：`在淘宝买一箱牛奶，选最便宜的`
+- **看地图找店**：`用大众点评看看附近有什么好吃的`
+- **查信息**：`打开浏览器查一下今天的天气`
+
+**它和你自己的手机是什么关系？** 无关。它操作的是火山引擎给你提供的一台"云手机"——一台 24 小时在云端运行的真实安卓手机。你的电脑不需要装任何手机 App，任务在云端执行，你在本地看结果。
+
+---
+
+## 二、开始之前：一次性准备（约 10 分钟）
+
+要用云手机，需要先在火山引擎开通服务并准备好"手机"和"钥匙"。**只需做一次**，之后一直可用。以下流程按官方文档 [正式接入 MUA](https://docs.volcengine.com/docs/6394/2603614?lang=zh) 整理。
+
+> 若已开通过、已有云手机资源，可跳过本节，直接看 [三、用起来](#三用起来--方式-a推荐让-ai-直接帮你做)。
+
+### 第 1 步 给云手机开权限（约 2 分钟）
+
+云手机执行任务时需要访问你的其他云资源（比如保存截图的对象存储）。这一步是**授权**，不做后面会报错。
+
+1. 打开 [ServiceRoleForIPaaS 授权页](https://console.volcengine.com/iam/service/attach_role/?ServiceName=ipaas)，点 **"立即授权"**；
+2. 打开 [角色管理](https://console.volcengine.com/iam/identitymanage/role/)，点 **"新建角色"**：
+   - 信任身份选 **"服务"** → 服务选 **"云手机"** → 下一步；
+   - 角色名填 **`PaasServiceRole`**（复制这个拼写）→ 下一步；
+   - 勾选全部策略，作用范围选"全局"，提交。
+
+> 💡 若页面提示"已授权"或角色已存在，跳过即可。
+
+### 第 2 步 开通 Mobile Use Agent 服务（约 1 分钟）
+
+1. 打开 [云手机控制台](https://console.volcengine.com/ACEP/Business/6)，点页面上的 **"立即开通"**；
+2. 弹窗中确认计费项，勾选同意条款和服务协议，点 **"立即开通"**。
+
+### 第 3 步 创建"业务"，拿到 ProductId（约 1 分钟）
+
+"业务"是云手机服务的组织单元，**ProductId 就是它的业务 ID**：
+
+1. 打开 [MUA 控制台](https://console.volcengine.com/ACEP/mua/)；
+2. 若还没有业务，系统会自动弹出新建框；填个名字（如 `my-phone`），点确定；
+3. 在**业务管理页**看到的一串 ID，就是 `ProductId`。
+
+### 第 4 步 订购云手机，拿到 PodId（约 5 分钟，含等待）
+
+云手机资源就是那台"云端的手机"，**PodId 是这台手机的实例 ID**：
+
+1. 在 [MUA 控制台](https://console.volcengine.com/ACEP/mua/) 左侧点 **"+ 新任务"**；
+2. 对话框左下角点 **"+ 订购云手机"**，按提示选地域、规格（推荐 8vCPU｜24GB｜256GB）、数量，下单；
+3. 首次订购约 **2～3 分钟**开通，之后到「**云手机资源**」页面看到实例 ID，就是 `PodId`；
+4. ⚠️ 实例状态需为"**运行中**"才能执行任务。
+
+> 📎 相关官方文档：[创建 MUA 业务](https://docs.volcengine.com/docs/6394/2298713) · [创建云手机资源](https://docs.volcengine.com/docs/6394/2604742) · [使用 MUA 执行任务](https://docs.volcengine.com/docs/6394/2298710)
+
+### 第 5 步 创建密钥，拿到 AK/SK（约 1 分钟）
+
+密钥是"钥匙"，本工具用它证明"是你"在调用云手机：
+
+1. 打开 [访问密钥管理](https://console.volcengine.com/iam/keymanage)；
+2. 点 **"新建密钥"**，创建后得到一对 **AK**（AccessKey ID）和 **SK**（Secret Access Key）。
+
+### 你需要在手边的 4 个值
+
+| 值 | 哪一步拿到 | 一句话说明 |
+|---|---|---|
+| `ProductId` | 第 3 步 | 业务的 ID |
+| `PodId` | 第 4 步 | 那台云手机的 ID |
+| `AK` / `SK` | 第 5 步 | 你的"钥匙"，请妥善保管 |
+
+---
+
+## 三、用起来 · 方式 A（推荐：让 AI 直接帮你做）
+
+如果你在用支持本 skill 的 AI 助手（如 WorkBuddy），**不需要敲任何命令**——直接把任务告诉 AI 即可：
+
+```
+你：帮我在云手机上打开小红书，搜索咖啡，把前3篇笔记标题告诉我
+```
+
+AI 会：
+
+1. 检测到你的云手机凭证尚未配置 → 引导你在终端运行一次 `mua setup`（只需一次）；
+2. 之后每次你只需描述任务，AI 自动调用云手机执行并回报结果。
+
+**这是最省事的用法**：你只负责"说"，AI 负责"做"。
+
+---
+
+## 四、用起来 · 方式 B（命令行三步）
+
+适合愿意用终端、想自己控制的人。
+
+### 第 1 步 安装（一次性）
 
 ```bash
-# 1. 安装（提供全局命令 mua）
-./install.sh
+./install.sh        # 提供全局命令 mua
+```
 
-# 2. 配置凭证（仅首次，SK 输入不回显；可顺便保存"默认手机"）
+安装后任意目录都能用 `mua`。
+
+### 第 2 步 配置（一次性）
+
+```bash
 mua setup
+```
 
-# 3. 运行任务（问答式向导）
+输入第 5 步拿到的 AK/SK（SK 输入时屏幕不显示，属正常）；程序会问是否保存"默认手机"，输入第 3/4 步的 ProductId/PodId 即可——之后就不用再填了。
+
+### 第 3 步 运行任务
+
+```bash
 mua run
 ```
 
-第 3 步的交互长这样：
+然后按提示描述任务即可：
 
 ```
 请描述任务: 打开小红书搜索咖啡
@@ -28,88 +142,59 @@ mua run
 [任务结束] 状态: 成功
 ```
 
-**之后每次只需 `mua run` 输入任务描述**——默认手机已记住，回车即用。
-
-> ⚠️ 前提：你需要先完成下方「开通与准备」——没有开通服务和云手机资源，`mua run` 无法执行。
-
-## 开通与准备（按官方指引）
-
-以下流程依据火山引擎官方文档 [控制台常见操作指引](https://docs.volcengine.com/docs/6394/2280699?lang=zh) 整理，按顺序完成即可。已开通过的用户可跳过本节。
-
-### 1. 账号与角色授权（一次性）
-
-让云手机服务有权访问对象存储等其他服务，需要完成**两项角色授权**：
-
-- **授权 ServiceRoleForIPaaS**：点击 [ServiceRoleForIPaaS 授权链接](https://console.volcengine.com/iam/service/attach_role/?ServiceName=ipaas)，单击"立即授权"。
-- **创建 PaasServiceRole 角色**（约 2 分钟）：
-  1. 打开 [角色管理](https://console.volcengine.com/iam/identitymanage/role/)，单击"新建角色"；
-  2. 信任身份选择"服务"，服务选择"云手机"，单击"下一步"；
-  3. 角色名填写 `PaasServiceRole`，单击"下一步"；
-  4. 勾选全部策略，作用范围选"全局"，单击"提交"。
-
-### 2. 开通 Mobile Use Agent 服务（一次性）
-
-1. 登录 [云手机控制台](https://console.volcengine.com/ACEP/Business/6)；
-2. 单击页面"立即开通"；
-3. 弹窗中确认 Mobile Use Agent Token 计费项，阅读并同意《产品服务条款》和《服务等级协议》，单击"立即开通"。
-
-### 3. 创建 MUA 业务 → 获得 **ProductId**
-
-MUA 业务是使用本服务的基础单元，**ProductId 即业务 ID**：
-
-1. 登录 [MUA 控制台](https://console.volcengine.com/ACEP/mua/)；
-2. 若账号下尚无业务，系统自动弹出新建业务框；若已有业务，在左侧目录树顶部展开业务列表，单击"+ 新建业务"；
-3. 填写业务名称（可添加子账号），单击"确定"；
-4. 创建后在**业务管理页**查看业务 ID，即为 `ProductId`。
-
-### 4. 订购云手机资源 → 获得 **PodId**
-
-云手机资源为业务提供真实可操作的云端手机实例，**PodId 即云手机实例 ID**：
-
-1. 在 [MUA 控制台](https://console.volcengine.com/ACEP/mua/) 左侧目录树单击"+ 新任务"；
-2. 对话框左下角单击"+ 订购云手机"，跳转购买页配置（地域、计费方式、云机规格 8vCPU｜24GB｜256GB、购买数量）；
-3. 确认订单并完成购买；
-4. ⚠️ 首次订购需约 **2～3 分钟**开通，开通后到「**云手机资源**」页面查看实例 ID，即为 `PodId`；
-5. ⚠️ 实例需保持"**运行中**"状态才可正常使用。
-
-### 5. 获取 AK / SK
-
-控制台 → 右上角头像 → **访问密钥**（Access Key），创建后得到 AK/SK 一对。
-
-> 📎 相关官方文档：[创建 MUA 业务](https://docs.volcengine.com/docs/6394/2298713)、[创建云手机资源](https://docs.volcengine.com/docs/6394/2604742)、[配置技能](https://docs.volcengine.com/docs/6394/2298758)、[配置应用操作指南](https://docs.volcengine.com/docs/6394/2298757)
+之后每次只需 `mua run`，描述新任务即可。
 
 ---
 
-拿到 `ProductId` / `PodId` / `AK` / `SK` 后，运行 `mua setup` 一次性保存（默认手机可选保存），之后即可 `mua run`。
+## 五、常见问题
 
-## 常用操作速查
+### 云手机里没装我要用的 App？
+
+默认云手机只预装少量应用。若任务需要特定 App（如小红书），需先在控制台"**发布 App**"安装到云手机：[发布 App 指引](https://www.volcengine.com/docs/6394/1223958?lang=zh)。装好后即可让 AI 操作它。
+
+### 遇到人脸识别验证（如登录银行 App）？
+
+云手机没有摄像头，但可以**用你的手机扫码完成验证**：
+
+1. 任务执行到人脸验证环节时，云手机画面会弹出二维码（或点右侧"**H5 扫码链接**"）；
+2. 用你手机上的相机/微信扫这个码，在手机上完成登录与人脸扫描；
+3. 扫脸时云手机画面提示"连接异常"是**正常现象**（手机端接管了摄像头），无需处理；
+4. 完成后回到控制台点"**重新连接**"，任务继续执行。
+
+> 📎 官方文档：[步骤四：使用手机扫码完成人脸识别验证](https://docs.volcengine.com/docs/6394/2603617)
+
+### 任务报错怎么办？
+
+- `ErrAssumeRoleFailed`：没做第 1 步授权，回 [第 1 步](#第-1-步-给云手机开权限约-2-分钟) 补授权；
+- `InvalidAccessKey`：AK/SK 不对或过期，运行 `mua setup` 重新配置；
+- 提示实例未运行：回 [第 4 步](#第-4-步-订购云手机拿到-podid约-5-分钟含等待) 确认云手机处于"运行中"。
+
+### 找不到 ProductId / PodId？
+
+`ProductId` 在 [MUA 控制台 → 业务管理](https://console.volcengine.com/ACEP/mua/)；`PodId` 在 [MUA 控制台 → 云手机资源](https://console.volcengine.com/ACEP/mua/)。找到后用 `mua setup` 存为默认手机，之后不用再找。
+
+---
+
+## 六、常用命令速查
 
 ```bash
-mua setup          # 配置/更换 AK/SK、默认手机
+mua setup          # 配置 AK/SK、默认手机（首次）
+mua run            # 运行任务（问答式向导）
 mua whoami         # 查看凭证与默认手机状态
 mua device         # 查看默认手机（--clear 清除）
-mua run            # 运行任务（问答式向导）
 mua status --run-id RUN_XXX    # 查询任务进度
 mua result --run-id RUN_XXX    # 获取任务结果
 mua cancel --run-id RUN_XXX    # 取消任务
 mua list           # 任务列表
-mua                # 交互式菜单（不输入命令时）
 ```
 
 完整命令与参数见 [references/commands.md](references/commands.md)。
 
-## 特性
+---
 
-- **零重复输入**：AK/SK 与默认手机持久化本地（权限 600），运行时回车沿用
-- **任务过程实时打印**：步骤增量输出，失败自动归因（原因/建议/错误码）
-- **GPS 定位注入**（可选）：仅任务涉及位置时询问；CoreLocation 米级 → IP 城市级自动降级
-- **错误码适配**：双通道捕获（HTTP 200 业务错误 + ApiException），统一中文提示与引导
+## 七、集成到你的 AI Agent（开发者）
 
-## 集成到你的 AI Agent
-
-如果你**已经有一个自己的 Agent**（基于 LangChain / LlamaIndex / 自研 function-calling / 任何 LLM 应用），想给它加上"操作真实手机"的能力，本仓库的 `scripts/` 就是可直接 import 的 Python 工具库。
-
-### 安装与引入
+如果你**已经有一个自己的 Agent**（LangChain / LlamaIndex / 自研 function-calling / 任何 LLM 应用），想给它加上"操作真实手机"的能力，`scripts/` 就是可直接 import 的 Python 工具库。
 
 ```bash
 git clone https://github.com/chenjie1129/mobile-use-agent.git
@@ -128,13 +213,11 @@ from credential_store import load_profile    # {ak, sk, product_id, pod_id}
 
 ### 方式一：注册为工具（function calling，推荐）
 
-把你的 LLM 当成"指挥官"，云手机操作作为一把工具交给它：
-
 ```python
 profile = load_profile()
 client = MobileUseAgentClient(ak=profile["ak"], sk=profile["sk"])
 
-# 1) 工具 schema：交给你的 LLM（OpenAI / 通义 / 自研均可）
+# 1) 工具 schema：交给你的 LLM
 MUA_TOOL_SCHEMA = {
     "type": "function",
     "function": {
@@ -170,19 +253,15 @@ def operate_cloud_phone(prompt: str, product_id: str = "", pod_id: str = "") -> 
 
 ### 方式二：直接调用客户端 API（异步 / 事件驱动）
 
-任务执行是"启动 → 轮询 → 取结果"三步，适合不想阻塞 Agent 主循环的场景：
-
 ```python
-# 启动任务 → 立刻拿到 RunId 返回（任务在云手机后台继续执行）
 resp = client.run_agent_task_one_step(
     run_name="async-task",
     product_id=profile["product_id"],
     pod_id=profile["pod_id"],
     user_prompt="打开微信",
 )
-run_id = resp["RunId"]
+run_id = resp["RunId"]                       # 立即返回，任务在云端后台执行
 
-# 稍后按需查询（可挂在你的定时任务 / 回调 / 轮询循环里）
 steps  = client.list_agent_run_current_step(run_id)   # 当前执行到哪一步
 result = client.get_agent_result(run_id)              # 最终结果（含截屏/输出）
 client.cancel_task(run_id)                            # 需要时取消
@@ -199,15 +278,21 @@ client.cancel_task(run_id)                            # 需要时取消
 | `list_agent_run_task` | ListAgentRunTask | 查询任务列表 |
 | `run_and_wait` | 组合封装 | 启动 + 轮询 + 取结果（阻塞式） |
 
-GPS 注入、TOS 截图存储、录屏、第三方 MCP 工具、输出 Schema 等更多参数见 [scripts/examples.py](scripts/examples.py)（5 个可直接运行场景）与 [references/api_reference.md](references/api_reference.md)。
+更多参数（GPS 注入、TOS 截图、录屏、MCP 工具、输出 Schema）见 [scripts/examples.py](scripts/examples.py) 与 [references/api_reference.md](references/api_reference.md)。
 
-## 高级用法
+---
+
+## 八、高级用法（开发者）
 
 ### 命令行直接传参（跳过向导，适合脚本）
 
 ```bash
 mua run --product-id PID --pod-id POD --prompt "打开微信" --gps --no-interactive
 ```
+
+### GPS 定位注入（可选）
+
+云手机无 GPS 硬件，可通过 `GpsInfo` 注入虚拟定位。仅当任务涉及位置（附近/地图/导航/外卖/打车等词）时自动询问，无关任务不打扰；`--gps` 可显式允许。定位策略自动降级：macOS CoreLocation（米级）→ IP 定位（城市级 ±10km），坐标系 WGS-84。详见 [references/gps.md](references/gps.md)。
 
 ### 目录结构
 
@@ -230,21 +315,7 @@ mobile-use-agent/
 └── requirements.txt       # Python 依赖
 ```
 
-## 常见问题
-
-**Q: 任务报 `ErrAssumeRoleFailed`？**
-A: 未完成跨服务授权。按上文「开通与准备」第 1 步授权 [ServiceRoleForIPaaS](https://console.volcengine.com/iam/service/attach_role/?ServiceName=ipaas) 并创建 `PaasServiceRole` 角色后重试。
-
-**Q: 找不到 ProductId / PodId？**
-A: `ProductId` 是 **MUA 业务 ID**（[MUA 控制台](https://console.volcengine.com/ACEP/mua/) → 业务列表）；`PodId` 是**云手机实例 ID**（MUA 控制台 → 云手机资源）。找到后 `mua setup` 保存为默认手机，之后不用再找。
-
-**Q: 报 `InvalidAccessKey`？**
-A: 凭证无效或过期，运行 `mua setup` 重新配置。
-
-**Q: 云手机实例"未运行"？**
-A: 实例需保持"运行中"才可执行任务，在 MUA 控制台 → 云手机资源 启动后重试。
-
-完整错误码表与处理见 [references/error_codes.md](references/error_codes.md)。
+---
 
 ## 许可证
 
