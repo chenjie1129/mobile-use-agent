@@ -65,13 +65,17 @@ def _main():
     max_step = int(max_step_input) if max_step_input else 100
     timeout = int(timeout_input) if timeout_input else 300
 
-    # 4. GPS 定位注入 (每次询问是否允许, 并告知获取结果)
+    # 4. GPS 定位注入 (每次询问是否允许, 多来源自动降级, 并告知获取结果)
     print("\n--- GPS 定位注入 ---")
     gps_info = None
-    if ask_location_permission():
-        gps_info = acquire_gps()
+    if ask_location_permission(user_prompt):
+        # 已授权: 系统定位 → IP 定位 → 文本坐标/地理编码 → 手动输入
+        gps_info = acquire_gps(prompt=user_prompt)
     else:
-        print("[跳过] 已拒绝获取位置, 本次任务不注入 GpsInfo")
+        # 拒绝自动获取: 仅走无隐私来源 (提示词中的坐标/地名) + 手动输入兜底
+        gps_info = acquire_gps(prompt=user_prompt, allow_permission=False, allow_ip=False)
+        if gps_info is None:
+            print("[跳过] 未提供位置, 本次任务不注入 GpsInfo")
 
     # 5. 运行任务并等待结果
     result = client.run_and_wait(

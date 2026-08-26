@@ -58,7 +58,7 @@ mua run --product-id PID --pod-id POD --prompt "打开地图查看附近美食"
 mua run --product-id PID --pod-id POD --prompt "打开地图" --gps --no-interactive
 ```
 
-定位策略自动降级：macOS CoreLocation（米级）→ IP 定位（城市级 ±10km），坐标系 WGS-84。获取结果会告知用户（来源/坐标/精度）。详见 [references/gps.md](references/gps.md)。
+定位获取为**多来源统一接口 + 自动降级链**（按精度从高到低）：文本/分享链接坐标解析 → 图片 EXIF → macOS CoreLocation（米级，需授权）→ IP 定位（城市级）→ 地名地理编码 → 手动输入兜底。仅 `system` 来源需要系统授权，拒绝授权时仍可走解析/手动输入。坐标系统一 WGS-84。获取结果会告知用户（来源/坐标/精度）。详见 [references/gps.md](references/gps.md)。
 
 ## 只读查询
 

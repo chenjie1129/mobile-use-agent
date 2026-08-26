@@ -17,10 +17,13 @@ from geo import acquire_gps
 def example_gps_injection():
     """示例: 获取本地位置并注入 GpsInfo
 
-    geo.acquire_gps() 会:
-      1. 优先通过 macOS CoreLocation 系统定位获取 (米级精度)
-      2. 失败时自动降级为 IP 定位 (城市级精度)
-      3. 打印获取结果 (来源/坐标/精度) 并返回 GpsInfo 字符串
+    geo.acquire_gps(prompt=...) 按降级链自动尝试多个来源:
+      1. 提示词中直接含坐标 (如 "39.916527,116.397128") → 直接解析
+      2. 提示词指向含 GPS 元数据的图片 → 解析 EXIF
+      3. macOS CoreLocation 系统定位 (米级精度, 需权限)
+      4. IP 定位 (城市级精度)
+      5. 提示词含地名/地址 → 地理编码为坐标
+      6. 全部失败 → 交互式询问手动输入坐标或地址
     生产环境中是否获取位置, 应先征求用户同意 (见 cli.py 的 ask_location_permission)。
     """
     print(">>> 示例: 获取本地位置并注入 GpsInfo")
@@ -30,8 +33,8 @@ def example_gps_injection():
         sk="YOUR_SK",
     )
 
-    # 获取当前位置 (含海拔/速度/方位角, CoreLocation 可用时)
-    gps_info = acquire_gps()
+    # 获取当前位置; 传入用户提示词可启用文本坐标/图片EXIF/地名地理编码
+    gps_info = acquire_gps(prompt="帮我看看附近有什么好吃的")
     if not gps_info:
         print("未获取到位置, 任务将不注入 GpsInfo")
         return

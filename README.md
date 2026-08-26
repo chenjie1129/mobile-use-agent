@@ -309,7 +309,9 @@ mua run --product-id PID --pod-id POD --prompt "打开企业微信，回复最�
 
 ### GPS 定位注入（可选）
 
-云手机无 GPS 硬件，可通过 `GpsInfo` 注入虚拟定位。仅当任务涉及位置（附近/地图/导航/外卖/打车等词）时自动询问，无关任务不打扰；`--gps` 可显式允许。定位策略自动降级：macOS CoreLocation（米级）→ IP 定位（城市级 ±10km），坐标系 WGS-84。详见 [references/gps.md](references/gps.md)。
+云手机无 GPS 硬件，可通过 `GpsInfo` 注入虚拟定位。仅当任务涉及位置（附近/地图/导航/外卖/打车等词）时自动询问，无关任务不打扰；`--gps` 可显式允许。
+
+定位获取为**多来源统一接口 + 自动降级链**：文本坐标解析 → 图片 EXIF → macOS CoreLocation（米级，需权限）→ IP 定位（城市级）→ 地名地理编码 → 手动输入兜底。拒绝自动获取时仍可用提示词中的坐标/地名或手动输入。坐标系统一 WGS-84。详见 [references/gps.md](references/gps.md)。
 
 ### 目录结构
 
@@ -323,7 +325,7 @@ mobile-use-agent/
 │   ├── mobile_use_agent.py  # 核心客户端, 封装 10 个 OpenAPI
 │   ├── error_codes.py     # 错误码定义与解析
 │   ├── credential_store.py  # 凭证 + 默认手机持久化
-│   └── geo.py             # 定位获取 (CoreLocation + IP 降级)
+│   └── geo.py             # 定位获取 (6 来源统一抽象 + 自动降级链)
 ├── references/            # 按需加载的参考文档
 │   ├── commands.md        # 命令参考
 │   ├── error_codes.md     # 错误码参考

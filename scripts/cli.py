@@ -332,19 +332,26 @@ def cmd_run_one_step(client, args):
             input("系统提示词 (可选, 回车跳过): ").strip() or None
         )
 
-    # --- GPS 定位注入 (按任务智能询问) ---
+    # --- GPS 定位注入 (按任务智能询问, 多来源自动降级) ---
     gps_info = None
     if args.gps:
         # 命令行显式授权 (非交互模式唯一注入途径)
-        gps_info = acquire_gps()
+        gps_info = acquire_gps(prompt=user_prompt, allow_manual=not args.no_interactive)
     elif not args.no_interactive and needs_location(user_prompt):
         # 任务与位置相关才询问; 无关任务自动跳过, 不打扰
         print("\n--- GPS 定位注入 ---")
         print("[提示] 任务涉及位置, 可注入本机定位到云手机")
         if ask_location_permission(user_prompt):
-            gps_info = acquire_gps()
+            # 已授权: 系统定位 → IP 定位 → 文本坐标/地理编码 → 手动输入
+            gps_info = acquire_gps(prompt=user_prompt)
         else:
-            print("[跳过] 已拒绝获取位置, 本次任务不注入 GpsInfo")
+            # 拒绝自动获取: 仅走无隐私来源 (提示词中的坐标/地名) + 手动输入兜底
+            print("[提示] 已拒绝自动获取。如提示词含坐标/地址仍会自动解析, 也可手动输入")
+            gps_info = acquire_gps(
+                prompt=user_prompt, allow_permission=False, allow_ip=False
+            )
+            if gps_info is None:
+                print("[跳过] 未提供位置, 本次任务不注入 GpsInfo")
 
     # --- 运行并等待 (统计耗时) ---
     t0 = time.time()
