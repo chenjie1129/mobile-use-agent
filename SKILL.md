@@ -1,6 +1,6 @@
 ---
 name: mobile-use-agent
-description: Run AI agent tasks on a Volcengine (火山引擎) cloud phone via the Mobile Use Agent OpenAPI. Use when the user asks to drive, automate, operate, or test an Android app on a cloud phone (e.g. open 小红书 and search, place an order, check nearby places on a map), or to check status, fetch result, cancel, or list a Mobile Use run. Requires one-time setup to store Volcengine AK/SK locally; ProductId and PodId can be saved as a default device during setup, the user prompt is provided per run. Supports optional GPS injection (GpsInfo) with user consent (auto-asked only for location-related tasks).
+description: Run AI agent tasks on a Volcengine (火山引擎) cloud phone via the Mobile Use Agent OpenAPI. Use when the user asks to drive, automate, operate, or test an Android app on a cloud phone (e.g. reply to WeCom/WeChat messages, clock in on DingTalk, check emails, approve OA requests, open 小红书 and search, place an order, check nearby places on a map), or to check status, fetch result, cancel, or list a Mobile Use run. Requires one-time setup to store Volcengine AK/SK locally; ProductId and PodId can be saved as a default device during setup, the user prompt is provided per run. Supports optional GPS injection (GpsInfo) with user consent (auto-asked only for location-related tasks).
 license: MIT
 agent_created: true
 metadata:
@@ -39,7 +39,7 @@ mua whoami                       # 或: python3 scripts/cli.py whoami
 默认走最便捷的 `RunAgentTaskOneStep`（免预创建配置），自动轮询步骤并实时增量打印，最后拉取最终结果：
 
 ```sh
-mua run --product-id PID --pod-id POD --prompt "打开小红书并搜索咖啡"
+mua run --product-id PID --pod-id POD --prompt "打开企业微信，回复最新客户消息"
 ```
 
 - **用户提示词每次提供**；**ProductId/PodId 优先用 setup 时保存的默认手机**（命令行参数可覆盖）。缺少时交互式向导补齐。
@@ -85,7 +85,7 @@ ak, sk = load_credentials()                       # 复用本地凭证
 client = MobileUseAgentClient(ak=ak, sk=sk)
 result = client.run_and_wait(
     run_name="my-task", pod_id="POD", product_id="PID",
-    user_prompt="打开微信", gps_info=None,        # 每次动态传入
+    user_prompt="打开企业微信查看未读消息", gps_info=None,   # 每次动态传入
 )
 ```
 

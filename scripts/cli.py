@@ -26,7 +26,7 @@ Mobile Use Agent - 交互式 CLI
   python cli.py run
 
   # 命令行直接传参 (跳过交互, 完全可控)
-  python cli.py run --product-id PID --pod-id POD --prompt "打开微信"
+  python cli.py run --product-id PID --pod-id POD --prompt "打开企业微信，回复最新客户消息"
 
   # 查询任务状态 / 结果 / 取消 / 列表
   python cli.py status --run-id RUN_XXX
@@ -91,7 +91,7 @@ def print_welcome():
     print("  欢迎使用「云手机小助手」")
     print("=" * 60)
     print("  它会在云端的一台手机上, 帮你自动完成操作")
-    print("  (点外卖、刷视频、查资料... 你说一句话, 它来做)")
+    print("  (回客户消息、打卡、查邮件... 你说一句话, 它来做)")
     print()
     print("  第一次使用, 需要从火山引擎控制台准备 4 个值:")
     print("    ProductId  云手机业务 ID")
