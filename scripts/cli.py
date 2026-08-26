@@ -39,6 +39,7 @@ import argparse
 import json
 import os
 import sys
+import time
 
 # 同目录导入
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -50,9 +51,7 @@ from mobile_use_agent import (
 from error_codes import (
     MobileUseError,
     format_error,
-    CATEGORY_AUTH,
-    CATEGORY_RESOURCE,
-    CATEGORY_HITL,
+    format_friendly_error,
 )
 from credential_store import (
     load_credentials,
@@ -67,6 +66,7 @@ from credential_store import (
     CREDENTIALS_FILE,
 )
 from geo import needs_location, ask_location_permission, acquire_gps
+from templates import resolve_template, format_template_menu
 
 
 def print_json(data):
@@ -74,31 +74,52 @@ def print_json(data):
     print(json.dumps(data, indent=2, ensure_ascii=False, default=str))
 
 
-def show_api_error(e: MobileUseError):
-    """展示 API 错误及按分类的差异化引导"""
-    print(f"\n[API 错误]")
-    print(format_error(e))
-    # 按分类给特殊引导
-    if e.category == CATEGORY_AUTH:
-        if e.code == "ErrAssumeRoleFailed":
-            print()
-            print("[引导] 需要先为账号授权跨服务访问 (Mobile Use Agent 调用 IPAAS):")
-            print("       控制台 → 访问控制 → 跨服务访问请求 → 授权 ServiceName=ipaas")
-        else:
-            print()
-            print("[引导] 凭证无效或已过期, 请重新配置:")
-            print("       python cli.py setup")
-    elif e.category == CATEGORY_RESOURCE:
+def show_api_error(e: MobileUseError, context: str = ""):
+    """展示 API 错误: 优先人话版, 技术细节折叠成一行"""
+    print()
+    print(format_friendly_error(e, context=context))
+    # 资深用户想看完整细节时, 展开技术版
+    if os.environ.get("MUA_VERBOSE_ERROR"):
         print()
-        print("[引导] 请在云手机控制台检查:")
-        print("       - 业务 ID (ProductId) 是否正确且已开通 Mobile Use Agent")
-        print("       - 实例 ID (PodId) 是否存在且处于运行状态")
-    elif e.category == CATEGORY_HITL:
-        print()
-        print("[引导] 该任务需要人工介入 (HITL):")
-        print("       - HITL_MORE_INFO      → 补充任务所需信息后重新发起")
-        print("       - HITL_APPROVE        → 由管理员/用户完成审批")
-        print("       - HITL_HUMAN_HELP     → 在云手机上完成手动操作后重试")
+        print(format_error(e))
+
+
+def print_welcome():
+    """首次使用欢迎页: 大白话说明这是什么 + 要准备什么"""
+    print()
+    print("=" * 60)
+    print("  欢迎使用「云手机小助手」")
+    print("=" * 60)
+    print("  它会在云端的一台手机上, 帮你自动完成操作")
+    print("  (点外卖、刷视频、查资料... 你说一句话, 它来做)")
+    print()
+    print("  第一次使用, 需要从火山引擎控制台准备 4 个值:")
+    print("    ProductId  云手机业务 ID")
+    print("    PodId      云手机实例 ID")
+    print("    AK / SK    访问密钥 (相当于你的账号密码)")
+    print("  只需配置一次, 之后每次运行都会自动记住。")
+    print("  详细图文教程: https://github.com/chenjie1129/mobile-use-agent")
+    print("=" * 60)
+
+
+def extract_result_status(result):
+    """从 GetAgentResult 响应中提取 (是否成功, 结果文本)"""
+    src = result
+    if isinstance(result, dict):
+        inner = result.get("Result")
+        src = inner if isinstance(inner, dict) else result
+
+    is_success = src.get("IsSuccess") if isinstance(src, dict) else None
+    ok = is_success == 1 or is_success is True
+
+    result_text = ""
+    if isinstance(src, dict):
+        r = src.get("Result")
+        if isinstance(r, str):
+            result_text = r[:200]
+        elif isinstance(r, dict):
+            result_text = json.dumps(r, ensure_ascii=False, default=str)[:200]
+    return ok, result_text
 
 
 def get_client(force_setup: bool = False) -> MobileUseAgentClient:
@@ -257,9 +278,17 @@ def cmd_run_one_step(client, args):
     # --- 第一步: 用户提示词 (每次输入, 任务的核心) ---
     if not user_prompt:
         print("\n--- 任务配置 ---")
-        print("描述你想在云手机上完成的操作, 例如:")
-        print('  "打开小红书搜索咖啡"  "查看桌面有什么"  "打开地图看看附近美食"')
-        user_prompt = input("\n请描述任务: ").strip()
+        print("描述你想在云手机上完成的操作。")
+        # 0 基础用户引导: 展示现成示例, 输入序号即可用
+        print(format_template_menu())
+        print()
+        user_prompt = input("请描述任务 (输入序号用示例，或直接输入你的任务): ").strip()
+
+        # 解析"输入序号用示例"
+        user_prompt, tpl_name = resolve_template(user_prompt)
+        if tpl_name:
+            print(f"[示例] 已选用「{tpl_name}」模板")
+            print(f"       任务内容: {user_prompt}")
 
     if not user_prompt:
         print("[错误] 任务描述不能为空!")
@@ -317,6 +346,8 @@ def cmd_run_one_step(client, args):
         else:
             print("[跳过] 已拒绝获取位置, 本次任务不注入 GpsInfo")
 
+    # --- 运行并等待 (统计耗时) ---
+    t0 = time.time()
     result = client.run_and_wait(
         run_name=run_name,
         pod_id=pod_id,
@@ -327,6 +358,15 @@ def cmd_run_one_step(client, args):
         system_prompt=system_prompt,
         gps_info=gps_info,
     )
+    elapsed = int(time.time() - t0)
+
+    # 成功反馈: 明确告诉用户"完成/未成功"和用时 (确定感)
+    ok, _ = extract_result_status(result)
+    if ok:
+        print(f"\n[完成] 任务成功！用时约 {elapsed} 秒")
+    else:
+        print(f"\n[未完成] 任务没有成功, 用时约 {elapsed} 秒")
+        print("         可以换个更清楚的说法再试一次 (运行 mua run)")
 
     print("\n" + "=" * 60)
     print("  [最终结果]")
@@ -642,6 +682,9 @@ def main():
         # 命令行/环境变量显式传入: 直接使用, 不读本地
         client = MobileUseAgentClient(ak=ak, sk=sk)
     else:
+        # 首次使用: 先展示欢迎页, 再引导配置并保存
+        if not has_credentials():
+            print_welcome()
         # 本地加载 -> 首次引导配置并保存
         client = get_client()
 

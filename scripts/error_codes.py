@@ -522,3 +522,220 @@ def format_error(err: MobileUseError) -> str:
         lines.append(f"  建议: {err.advice}")
     lines.append(f"  {'可重试' if err.retryable else '不可重试, 需人工处理'}")
     return "\n".join(lines)
+
+
+# ========================
+# 人话版错误 (面向 0 基础用户)
+# 按错误标识映射: (发生了什么, 你该怎么办)
+# 覆盖小白最可能遇到的场景; 未命中的走分类兜底
+# ========================
+FRIENDLY_ACTIONS = {
+    "ErrAssumeRoleFailed": (
+        "还没有给云手机服务开授权",
+        "打开下面的链接，点「一键授权」即可：\n"
+        "   https://console.volcengine.com/iam/service/attach_role/?ServiceName=ipaas",
+    ),
+    "InvalidAccessKey": (
+        "填写的密钥不对，或者密钥已被停用",
+        "运行 mua setup 重新填写 AK/SK；还不行就去火山引擎控制台确认密钥状态",
+    ),
+    "SignatureDoesNotMatch": (
+        "密钥好像复制得不完整，或前后带了空格",
+        "运行 mua setup 重新粘贴 AK/SK，注意前后不要留空格",
+    ),
+    "AccessDenied": (
+        "这个账号没有使用云手机服务的权限",
+        "检查是否已开通「云手机 Mobile Use Agent」服务；子账号需要在主账号下获得授权",
+    ),
+    "Unauthorized": (
+        "登录凭证有问题",
+        "运行 mua setup 重新配置 AK/SK",
+    ),
+    "RequestExpired": (
+        "请求签名过期了，通常是电脑系统时间不准",
+        "打开系统设置开启「自动设置时间」，然后重试",
+    ),
+    "ErrCloudPhoneProductUnavailable": (
+        "云手机业务（ProductId）不存在、没开通或填错了",
+        "到云手机控制台确认 ProductId 正确，且该业务已开通 Mobile Use Agent",
+    ),
+    "ErrCloudPhonePodUnavailable": (
+        "云手机实例（PodId）不存在、没开机或填错了",
+        "到云手机控制台确认 PodId 正确，且实例处于运行状态",
+    ),
+    "ErrCloudPhoneGPSInjectFailed": (
+        "位置信息没能注入到云手机",
+        "重新试一次；如果一直失败，可以跳过定位继续做任务",
+    ),
+    "RESOURCE_CLOUDPHONE_UNREACHABLE": (
+        "云手机暂时连不上",
+        "稍等片刻会自动重试；很久没恢复的话，去控制台重启一下实例",
+    ),
+    "ENV_APP_NOT_INSTALLED": (
+        "云手机上没有安装要用到的 App",
+        "先到云手机里安装这个 App，再重新发起任务",
+    ),
+    "ENV_APP_LAUNCH_FAILED": (
+        "App 打不开或运行异常",
+        "确认云手机里的 App 版本正常，重启一次再试",
+    ),
+    "AGENT_MAX_STEP_REACHED": (
+        "任务步骤太多，超过了限制",
+        "把大任务拆成几个小任务，一次只做一件事",
+    ),
+    "AGENT_TOKEN_BUDGET_EXCEEDED": (
+        "任务内容太长，超过了模型的处理上限",
+        "简化任务描述，去掉不必要的细节",
+    ),
+    "AGENT_TIMEOUT": (
+        "任务运行超时了",
+        "把任务拆小一点，或换成更直接的说法再试",
+    ),
+    "AGENT_STUCK_LOOP": (
+        "Agent 在原地打转，陷入重复操作",
+        "换个说法重新描述任务，或取消后重新发起",
+    ),
+    "RESULT_NOT_ACHIEVED": (
+        "任务没有成功完成",
+        "换个更清楚、更具体的说法再试一次，比如把目标拆成一步步的操作",
+    ),
+    "MODEL_SAFETY_BLOCK": (
+        "内容触碰了安全限制，被模型拦下了",
+        "换个说法或换一个目标再试",
+    ),
+    "SECURITY_BLOCKED": (
+        "这个操作被安全策略判定为高风险，被拦下了",
+        "调整任务目标，避免系统级修改、绕过限制等高风险操作",
+    ),
+    "SECURITY_RISK_CONTROL": (
+        "任务内容触发了平台安全风控",
+        "检查指令里有没有敏感、违规的内容，调整后再试",
+    ),
+    "HITL_MORE_INFO": (
+        "任务需要你补充一些信息",
+        "按提示补上缺失的信息，然后重新发起任务",
+    ),
+    "HITL_APPROVE": (
+        "任务需要有人审批确认",
+        "联系管理员或主账号完成审批",
+    ),
+    "HITL_HUMAN_HELP": (
+        "任务需要人工协助操作",
+        "在云手机里完成需要的手动操作，然后重试",
+    ),
+    "MODEL_CALL_FAILED": (
+        "AI 模型服务暂时不稳定",
+        "稍等片刻再重试",
+    ),
+    "TOOL_SCREENSHOT_FAILED": (
+        "截取云手机屏幕画面失败了",
+        "稍后重试",
+    ),
+    "PLATFORM_UNAVAILABLE": (
+        "平台服务暂时不稳定",
+        "稍等片刻再重试",
+    ),
+    "PLATFORM_INCOMPATIBLE": (
+        "接口版本不兼容",
+        "将项目更新到最新版本后重试",
+    ),
+    "ErrParsingParams": (
+        "填写的参数格式有问题",
+        "检查输入内容，或重新跑一次向导 (mua run)",
+    ),
+    "ErrParamInvalid": (
+        "填写的参数校验没通过",
+        "检查输入内容，或重新跑一次向导 (mua run)",
+    ),
+    "ErrDbMissing": (
+        "找不到对应的记录",
+        "检查填写的 ID 是否复制完整",
+    ),
+}
+
+_CATEGORY_FRIENDLY = {
+    CATEGORY_AUTH: (
+        "登录或权限方面出了问题",
+        "按提示检查密钥和授权；可以用 mua setup 重新配置",
+    ),
+    CATEGORY_RESOURCE: (
+        "云手机资源方面出了问题",
+        "到云手机控制台确认 ProductId、PodId 正确，实例已开通且处于运行状态",
+    ),
+    CATEGORY_PARAM: (
+        "填写的参数有问题",
+        "检查输入有没有拼写或格式错误，再试一次",
+    ),
+    CATEGORY_TASK: (
+        "任务没有按预期完成",
+        "换个更清晰、更具体的说法再试一次",
+    ),
+    CATEGORY_HITL: (
+        "任务需要你参与一下",
+        "按提示补充信息或完成确认",
+    ),
+    CATEGORY_MODEL: (
+        "AI 模型那边出了点问题",
+        "稍等片刻重试一次",
+    ),
+    CATEGORY_TOOL: (
+        "云手机上的应用或工具出了问题",
+        "检查云手机里相关的 App 是否已安装、是否正常",
+    ),
+    CATEGORY_SECURITY: (
+        "操作被安全策略拦下了",
+        "换个说法或换个操作目标再试",
+    ),
+    CATEGORY_PLATFORM: (
+        "平台服务暂时不稳定",
+        "稍等片刻再试；反复失败可联系火山引擎技术支持",
+    ),
+    CATEGORY_SYSTEM: (
+        "遇到一个少见的问题",
+        "记下上面的错误信息，稍后重试，或联系火山引擎技术支持",
+    ),
+    CATEGORY_UNKNOWN: (
+        "遇到一个没见过的问题",
+        "记下错误信息，稍后重试，或联系火山引擎技术支持",
+    ),
+}
+
+
+def format_friendly_error(err: MobileUseError, context: str = "") -> str:
+    """将错误翻译成 0 基础用户看得懂的话
+
+    输出两行核心信息:
+      - 发生了什么 (人话解释)
+      - 你该怎么办 (具体动作)
+    技术细节 (错误码/分类/是否可重试) 折叠成一行小字附后。
+
+    Args:
+        err: MobileUseError
+        context: 可选的上下文前缀 (如 "第 2 步出错了")
+
+    Returns:
+        人话版错误文本
+    """
+    what, how = FRIENDLY_ACTIONS.get(err.code) or _CATEGORY_FRIENDLY.get(
+        err.category, _CATEGORY_FRIENDLY[CATEGORY_UNKNOWN]
+    )
+
+    lines = []
+    if context:
+        lines.append(f"[{context}]")
+    else:
+        lines.append("[出错了]")
+    lines.append(f"  发生了什么：{what}")
+    lines.append(f"  你该怎么办：{how}")
+
+    # 技术细节折叠成一行 (给愿意深究的用户)
+    tech = []
+    if err.code_n is not None:
+        tech.append(str(err.code_n))
+    if err.code:
+        tech.append(err.code)
+    label = CATEGORY_LABELS.get(err.category, err.category)
+    tech.append(f"[{label}]")
+    tech.append("可重试" if err.retryable else "不可自动恢复")
+    lines.append(f"  (技术信息: {' '.join(tech)})")
+    return "\n".join(lines)
