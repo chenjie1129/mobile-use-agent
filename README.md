@@ -125,7 +125,7 @@ AI 会：
 
 安装脚本会做两件事：**① 创建一个独立的 Python 环境并装好全部依赖**（放在 `~/.local/share/mobile-use-agent/venv`，不影响你电脑上已有的任何 Python）；**② 把 `mua` 命令装到 `~/.local/bin`**。整个过程不需要你懂 Python，也不需要提前装任何东西（只要系统有 Python 3）。
 
-> ⏳ **首次安装需要几分钟**：依赖里含火山引擎全产品 SDK 全家桶（约 43MB），下载 + 解压需要几分钟，属正常现象，耐心等"安装完成"提示即可。之后再次运行 `./install.sh` 会秒过（环境已存在则直接复用）。
+> ⚡ **首次安装约 1 分钟**：依赖里的火山引擎官方 SDK 是 137 个产品的"全家桶"（完整安装约 9 分钟），但本工具只用其中 1 个模块，安装脚本会**只抽取用到的部分**（2.6 万个文件 → 55 个），运行行为与完整安装完全一致；万一精简安装失败，会自动回退到官方完整安装，无需手动处理。之后再次运行 `./install.sh` 会秒过（环境已存在则直接复用）。
 
 安装后任意目录都能用 `mua`。
 
@@ -321,13 +321,15 @@ mua run --product-id PID --pod-id POD --prompt "打开企业微信，回复最�
 mobile-use-agent/
 ├── SKILL.md               # Skill 入口: 触发场景 + 安全边界 + 工作流
 ├── bin/mua                # 全局命令入口
-├── install.sh             # 一键安装: 创建独立 Python 环境 + 装依赖 + 提供 mua 命令
+├── install.sh             # 一键安装: 独立 Python 环境 + 精简装依赖 (约 1 分钟) + mua 命令
 ├── scripts/               # 可执行代码 + 可 import 的工具库
 │   ├── cli.py             # 交互式 CLI + 命令行模式 (主入口)
 │   ├── mobile_use_agent.py  # 核心客户端, 封装 10 个 OpenAPI
 │   ├── error_codes.py     # 错误码定义与解析
 │   ├── credential_store.py  # 凭证 + 默认手机持久化
-│   └── geo.py             # 定位获取 (6 来源统一抽象 + 自动降级链)
+│   ├── geo.py             # 定位获取 (6 来源统一抽象 + 自动降级链)
+│   ├── make_slim_sdk.py   # 构建精简 SDK wheel (安装提速用, 见 install.sh)
+│   └── templates.py       # 示例任务模板
 ├── references/            # 按需加载的参考文档
 │   ├── commands.md        # 命令参考
 │   ├── error_codes.md     # 错误码参考

@@ -4,6 +4,8 @@
 # 做什么:
 #   1. 创建独立 Python 环境 (venv) 并安装全部依赖
 #      -> 不依赖、也不污染你电脑上已有的 Python / 系统环境
+#      -> 精简安装: 官方 SDK 是 137 个产品的全家桶 (2.6 万个文件, 完整安装约
+#         5-10 分钟), 本工具只用其中 1 个模块, 因此只抽取安装, 通常 1 分钟内完成
 #   2. 将 bin/mua 软链到 ~/.local/bin/mua, 之后任意目录可直接使用:
 #      mua setup / mua run / mua status ...
 #
@@ -45,10 +47,37 @@ fi
 # --- 2. 安装依赖 (仅当 SDK 缺失时) ---
 echo "[2/3] 检查依赖..."
 if ! "$VENV_DIR/bin/python" -c "import volcenginesdkcore" >/dev/null 2>&1; then
-  echo "      正在安装依赖到独立环境 (首次需要下载, 请稍候)..."
-  "$VENV_DIR/bin/pip" install --upgrade pip >/dev/null 2>&1 || true
-  "$VENV_DIR/bin/pip" install -r "$SCRIPT_DIR/requirements.txt"
-  echo "      依赖安装完成"
+  echo "      正在安装依赖到独立环境..."
+  # 精简安装: 全家桶 2.6 万个文件里本工具只用 volcenginesdkcore (81 个文件),
+  # 只下载官方 wheel 并抽取该模块, 安装耗时从 ~9 分钟降到 ~1 分钟。
+  TMP_DEP="$(mktemp -d)"
+  install_deps_slim() {
+    local sdk_spec
+    sdk_spec="$(grep -iE '^[[:space:]]*volcengine-python-sdk' "$SCRIPT_DIR/requirements.txt" 2>/dev/null | head -1 | tr -d '[:space:]')"
+    [ -z "$sdk_spec" ] && sdk_spec="volcengine-python-sdk"
+    echo "      [a] 下载官方 SDK 安装包 (43MB, 只下载一次, 请稍候)..."
+    "$VENV_DIR/bin/pip" download "$sdk_spec" --no-deps -d "$TMP_DEP/wheel" || return 1
+    echo "      [b] 构建精简包 (只保留用到的 1/137 个模块)..."
+    "$VENV_DIR/bin/python" "$SCRIPT_DIR/scripts/make_slim_sdk.py" \
+      "$TMP_DEP/wheel" "$TMP_DEP/slim" || return 1
+    echo "      [c] 安装精简 SDK 及依赖 (certifi/python-dateutil/six/urllib3)..."
+    "$VENV_DIR/bin/pip" install "$TMP_DEP/slim/"*.whl || return 1
+    # 其余依赖 (Pillow / pyobjc 等, 都是小包; 注释和空行 pip 会自动忽略)
+    grep -viE '^[[:space:]]*volcengine-python-sdk' "$SCRIPT_DIR/requirements.txt" \
+      > "$TMP_DEP/req-rest.txt" 2>/dev/null || true
+    if [ -s "$TMP_DEP/req-rest.txt" ]; then
+      "$VENV_DIR/bin/pip" install -r "$TMP_DEP/req-rest.txt" || return 1
+    fi
+    return 0
+  }
+  if install_deps_slim; then
+    echo "      依赖安装完成 (精简模式, 只装用得到的部分)"
+  else
+    echo "      [提示] 精简安装未成功, 回退到官方完整安装 (约 5-10 分钟)..."
+    "$VENV_DIR/bin/pip" install -r "$SCRIPT_DIR/requirements.txt"
+    echo "      依赖安装完成 (完整模式)"
+  fi
+  rm -rf "$TMP_DEP"
 else
   echo "      依赖已就绪, 跳过安装"
 fi
