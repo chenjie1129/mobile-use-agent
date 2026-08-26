@@ -24,7 +24,7 @@ SKILL_DIR="$(cd -P "$(dirname "$SOURCE")/.." >/dev/null 2>&1 && pwd)"
 # --- 查找可用的 Python (能 import volcenginesdkcore 的优先) ---
 PY=""
 for candidate in \
-  "/Users/bytedance/.workbuddy/binaries/python/envs/default/bin/python" \
+  "${HOME}/.workbuddy/binaries/python/envs/default/bin/python" \
   "$(command -v python3)" \
   "$(command -v python)"; do
   if [ -n "$candidate" ] && [ -x "$candidate" ]; then
