@@ -1,6 +1,6 @@
 ---
 name: mobile-use-agent
-description: Run AI agent tasks on a Volcengine (火山引擎) cloud phone via the Mobile Use Agent OpenAPI. Use when the user asks to drive, automate, operate, or test an Android app on a cloud phone (e.g. open 小红书 and search, place an order, check nearby places on a map), or to check status, fetch result, cancel, or list a Mobile Use run. Requires one-time setup to store Volcengine AK/SK locally; ProductId, PodId and the user prompt are provided per run. Supports optional GPS injection (GpsInfo) with user consent.
+description: Run AI agent tasks on a Volcengine (火山引擎) cloud phone via the Mobile Use Agent OpenAPI. Use when the user asks to drive, automate, operate, or test an Android app on a cloud phone (e.g. open 小红书 and search, place an order, check nearby places on a map), or to check status, fetch result, cancel, or list a Mobile Use run. Requires one-time setup to store Volcengine AK/SK locally; ProductId and PodId can be saved as a default device during setup, the user prompt is provided per run. Supports optional GPS injection (GpsInfo) with user consent (auto-asked only for location-related tasks).
 license: MIT
 agent_created: true
 metadata:
@@ -22,13 +22,13 @@ metadata:
 
 ## 检查可用性
 
-首次调用可能自动安装 Python 依赖（`pip install -r requirements.txt`）。
+首次调用可能自动安装 Python 依赖（`pip install -r requirements.txt`）。入口优先用全局命令 `mua`（已 `./install.sh` 安装时），否则 `python3 scripts/cli.py`：
 
 ```sh
-python3 scripts/cli.py whoami
+mua whoami                       # 或: python3 scripts/cli.py whoami
 ```
 
-- 若提示"未配置凭证"，请用户在自己的终端运行 `python3 scripts/cli.py setup` 完成一次性配置（AK/SK 保存到 `~/.mobile_use_agent/credentials.json`，权限 600）。
+- 若提示"未配置凭证"，请用户在自己的终端运行 `mua setup` 完成一次性配置（AK/SK 保存到 `~/.mobile_use_agent/credentials.json`，权限 600；可同时保存默认手机）。
 - 若依赖缺失，先执行 `pip install -r requirements.txt`。
 
 ## 执行用户请求的任务
@@ -36,23 +36,23 @@ python3 scripts/cli.py whoami
 默认走最便捷的 `RunAgentTaskOneStep`（免预创建配置），自动轮询步骤并实时增量打印，最后拉取最终结果：
 
 ```sh
-python3 scripts/cli.py run --product-id PID --pod-id POD --prompt "打开小红书并搜索咖啡"
+mua run --product-id PID --pod-id POD --prompt "打开小红书并搜索咖啡"
 ```
 
-- **PID / POD 每次由用户提供**（或交互输入）；提示词为用户想让 Agent 执行的操作。
+- **用户提示词每次提供**；**ProductId/PodId 优先用 setup 时保存的默认手机**（命令行参数可覆盖）。缺少时交互式向导补齐。
 - 任务执行中步骤会增量打印（`-- Step N [OK]`），结束后展示状态/内容/截屏 URL/用量；失败时自动归因（打印中文失败原因、操作建议、错误码）。
 - 轮询/取消/续跑/录屏/输出 schema 等高级用法见 [references/commands.md](references/commands.md)。
 
 ### GPS 定位注入（可选）
 
-云手机无 GPS 硬件，可通过 `GpsInfo` 注入虚拟定位（地图类 App 显示指定位置）。每次发起任务前询问用户是否允许获取本机位置：
+云手机无 GPS 硬件，可通过 `GpsInfo` 注入虚拟定位（地图类 App 显示指定位置）。**仅当任务涉及位置时**（提示词含 附近/地图/导航/外卖/打车 等词）程序会自动询问用户是否允许获取本机位置；无关任务不打扰：
 
 ```sh
-# 交互式：程序会询问"是否允许获取当前位置"（拒绝则不注入，功能不受影响）
-python3 scripts/cli.py run --product-id PID --pod-id POD --prompt "打开地图查看附近美食"
+# 交互式：位置相关任务会询问"是否允许获取当前位置"（拒绝则不注入，功能不受影响）
+mua run --product-id PID --pod-id POD --prompt "打开地图查看附近美食"
 
 # 非交互/已授权：--gps 显式允许并注入
-python3 scripts/cli.py run --product-id PID --pod-id POD --prompt "打开地图" --gps --no-interactive
+mua run --product-id PID --pod-id POD --prompt "打开地图" --gps --no-interactive
 ```
 
 定位策略自动降级：macOS CoreLocation（米级）→ IP 定位（城市级 ±10km），坐标系 WGS-84。获取结果会告知用户（来源/坐标/精度）。详见 [references/gps.md](references/gps.md)。
@@ -60,9 +60,10 @@ python3 scripts/cli.py run --product-id PID --pod-id POD --prompt "打开地图"
 ## 只读查询
 
 ```sh
-python3 scripts/cli.py status --run-id RUN_XXX   # 查询任务当前步骤
-python3 scripts/cli.py result --run-id RUN_XXX   # 获取任务运行结果
-python3 scripts/cli.py list                      # 查询任务列表
+mua status --run-id RUN_XXX   # 查询任务当前步骤
+mua result --run-id RUN_XXX   # 获取任务运行结果
+mua list                      # 查询任务列表
+mua whoami / mua device       # 凭证与默认手机状态
 ```
 
 ## 错误处理

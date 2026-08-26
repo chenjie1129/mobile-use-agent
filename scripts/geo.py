@@ -281,8 +281,70 @@ def get_location(verbose: bool = True, timeout: float = 15.0) -> Optional[Locati
     return get_location_ip(timeout=8.0)
 
 
-def ask_location_permission() -> bool:
-    """询问用户是否允许获取当前位置 (每次任务前由 CLI 调用)"""
+# ========================
+# 位置意图判断 (智能询问)
+# ========================
+
+# 强信号触发词: 命中任一即认为任务与位置相关, 才询问定位授权
+# 设计原则: 宁缺毋滥 —— 只覆盖明确需要位置的场景, 避免无关任务被打扰
+LOCATION_KEYWORDS = [
+    # 位置/空间词
+    "附近", "周边", "地图", "导航", "位置", "定位", "距离",
+    "路线", "坐标", "地址", "在哪", "哪里", "方向",
+    # 场景词
+    "外卖", "打车", "滴滴", "共享单车", "公交", "地铁",
+    "餐厅", "美食", "酒店", "民宿", "景点", "探店", "逛街",
+    "加油站", "停车场", "医院", "药店", "银行", "超市",
+    # 英文/混合
+    "gps", "location", "nearby", "map", "navigate",
+]
+
+# 明显与位置无关的语境 (避免误报)
+LOCATION_NEGATIVE_HINTS = [
+    "定位服务", "关闭定位", "设置里", "检查定位", "定位权限",
+]
+
+
+def needs_location(prompt: str) -> bool:
+    """判断用户提示词是否与位置相关 (决定是否询问定位授权)
+
+    Args:
+        prompt: 用户提示词
+
+    Returns:
+        True = 任务可能依赖位置, 值得询问; False = 无关, 跳过询问
+    """
+    if not prompt:
+        return False
+
+    text = prompt.lower()
+
+    # 负向语境优先: 提到的是定位设置本身, 而非需要定位的任务
+    for hint in LOCATION_NEGATIVE_HINTS:
+        if hint in text:
+            return False
+
+    for kw in LOCATION_KEYWORDS:
+        if kw in text:
+            return True
+
+    return False
+
+
+def ask_location_permission(prompt: str = "") -> bool:
+    """询问用户是否允许获取当前位置
+
+    Args:
+        prompt: 用户提示词; 传入时用于判断任务是否与位置相关,
+                不相关则直接返回 False (不打扰用户)
+
+    Returns:
+        True = 允许; False = 拒绝或无需定位
+    """
+    # 智能判断: 任务与位置无关时, 跳过询问
+    if prompt and not needs_location(prompt):
+        return False
+
     try:
         ans = input("是否允许获取当前位置并注入云手机 GPS? [y/N]: ").strip().lower()
     except (EOFError, KeyboardInterrupt):

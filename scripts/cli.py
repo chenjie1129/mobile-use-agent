@@ -5,22 +5,27 @@ Mobile Use Agent - 交互式 CLI
 凭证策略:
   - AK/SK: 首次运行时配置, 保存到本地 (~/.mobile_use_agent/credentials.json)
            后续运行自动加载, 无需重复输入
-  - ProductId / PodId / 用户提示词: 每次发起任务时由用户输入
+  - ProductId / PodId: 可选保存为"默认手机" (setup 时配置),
+           之后运行任务直接回车沿用; 命令行参数始终优先
+  - 用户提示词: 每次发起任务时输入
 
 用法:
   # 交互式模式 (首次运行会引导配置 AK/SK)
   python cli.py
 
-  # 重新配置凭证
+  # 重新配置凭证 (可选配置默认手机)
   python cli.py setup
 
-  # 查看当前凭证状态
+  # 查看当前凭证状态 / 默认手机
   python cli.py whoami
 
-  # 一键运行任务 (每次输入 ProductId/PodId/提示词)
+  # 查看/清除默认手机
+  python cli.py device [--clear]
+
+  # 一键运行任务 (问答式向导: 先描述任务, 手机默认值回车沿用)
   python cli.py run
 
-  # 命令行直接传参 (跳过交互)
+  # 命令行直接传参 (跳过交互, 完全可控)
   python cli.py run --product-id PID --pod-id POD --prompt "打开微信"
 
   # 查询任务状态 / 结果 / 取消 / 列表
@@ -54,10 +59,14 @@ from credential_store import (
     get_credentials_interactive,
     delete_credentials,
     mask_secret,
+    mask_id,
     has_credentials,
+    get_default_device,
+    set_default_device,
+    clear_default_device,
     CREDENTIALS_FILE,
 )
-from geo import ask_location_permission, acquire_gps
+from geo import needs_location, ask_location_permission, acquire_gps
 
 
 def print_json(data):
@@ -102,21 +111,44 @@ def get_client(force_setup: bool = False) -> MobileUseAgentClient:
     return MobileUseAgentClient(ak=ak, sk=sk)
 
 
-def get_product_pod():
-    """交互式获取 ProductId/PodId (每次任务都要求输入)"""
+def get_product_pod(use_default: bool = True):
+    """交互式获取 ProductId/PodId (优先沿用保存的默认手机)
+
+    Args:
+        use_default: True 时先显示保存的默认手机, 用户回车即可沿用
+
+    Returns:
+        (product_id, pod_id); 用户取消/输入为空时返回 (None, None)
+    """
+    saved_pid, saved_pod = get_default_device() if use_default else ("", "")
+
     print("\n--- 云手机实例配置 ---")
-    product_id = input("请输入 ProductId (云手机业务 ID): ").strip()
-    pod_id = input("请输入 PodId (云手机实例 ID): ").strip()
+    if saved_pid and saved_pod:
+        print(f"[提示] 默认手机: ProductId={mask_id(saved_pid)}  PodId={mask_id(saved_pod)}")
+        print("       (直接回车沿用默认手机; 输入新值切换)")
+
+    product_id = input(f"ProductId (云手机业务 ID) [{saved_pid}]: ").strip() or saved_pid
+    pod_id = input(f"PodId (云手机实例 ID) [{saved_pod}]: ").strip() or saved_pod
 
     if not product_id or not pod_id:
-        print("[错误] ProductId 和 PodId 不能为空!")
+        print("[错误] ProductId 和 PodId 不能为空! (可用 mua setup 配置默认手机)")
         return None, None
+
+    # 提示可保存为默认 (仅在本次是新输入且与已保存不同时询问)
+    if (product_id, pod_id) != (saved_pid, saved_pod):
+        try:
+            ans = input("将这台手机保存为默认 (下次回车即可用)? [y/N]: ").strip().lower()
+            if ans in ("y", "yes"):
+                set_default_device(product_id, pod_id)
+                print("[成功] 已保存默认手机")
+        except ValueError as e:
+            print(f"[提示] {e}")
 
     return product_id, pod_id
 
 
 def cmd_setup(args):
-    """重新配置 AK/SK 凭证"""
+    """重新配置 AK/SK 凭证 (可选配置默认手机)"""
     if has_credentials():
         saved = load_credentials()
         if saved:
@@ -128,6 +160,34 @@ def cmd_setup(args):
 
     ak, sk = get_credentials_interactive(force_setup=True)
 
+    # 可选: 配置默认云手机
+    print("\n--- 默认云手机 (可选) ---")
+    print("配置后运行任务时可直接回车沿用, 不用每次查找 ID")
+    saved_pid, saved_pod = get_default_device()
+    if saved_pid and saved_pod:
+        print(f"[当前默认] ProductId={mask_id(saved_pid)}  PodId={mask_id(saved_pod)}")
+        ans = input("保留当前默认手机? [Y/n]: ").strip().lower()
+        if ans in ("", "y", "yes"):
+            return
+    else:
+        print("(没有已保存的默认手机)")
+
+    ans = input("是否现在配置默认手机? [y/N]: ").strip().lower()
+    if ans not in ("y", "yes"):
+        return
+
+    product_id = input("ProductId (云手机业务 ID): ").strip()
+    pod_id = input("PodId (云手机实例 ID): ").strip()
+    if not product_id or not pod_id:
+        print("[提示] 输入为空, 跳过默认手机配置 (仍可在 run 时临时输入)")
+        return
+
+    try:
+        set_default_device(product_id, pod_id)
+        print("[成功] 已保存默认手机, 运行任务时回车即可沿用")
+    except ValueError as e:
+        print(f"[警告] 保存失败: {e}")
+
 
 def cmd_whoami(args):
     """查看凭证状态"""
@@ -137,10 +197,35 @@ def cmd_whoami(args):
         print(f"凭证文件: {CREDENTIALS_FILE}")
         print(f"AK:       {mask_secret(ak)}")
         print(f"SK:       {mask_secret(sk)}")
+        saved_pid, saved_pod = get_default_device()
+        if saved_pid and saved_pod:
+            print(f"默认手机: ProductId={mask_id(saved_pid)}  PodId={mask_id(saved_pod)}")
+        else:
+            print("默认手机: (未设置, 运行任务时临时输入即可)")
         print("\n如需重新配置, 运行: python cli.py setup")
     else:
         print("尚未配置凭证")
         print(f"首次运行任意命令时会自动引导配置, 或运行: python cli.py setup")
+
+
+def cmd_device(args):
+    """查看/清除默认云手机"""
+    if args.clear:
+        try:
+            clear_default_device()
+            print("[成功] 已清除默认手机 (AK/SK 保留)")
+        except Exception as e:
+            print(f"[错误] 清除失败: {e}")
+        return
+
+    saved_pid, saved_pod = get_default_device()
+    if saved_pid and saved_pod:
+        print(f"默认手机: ProductId={mask_id(saved_pid)}  PodId={mask_id(saved_pod)}")
+        print("\n如需清除, 运行: python cli.py device --clear")
+        print("如需更换, 运行: python cli.py setup")
+    else:
+        print("默认手机: (未设置)")
+        print("运行 python cli.py setup 可配置默认手机, 之后任务直接回车沿用")
 
 
 def cmd_logout(args):
@@ -164,28 +249,44 @@ def cmd_logout(args):
 
 
 def cmd_run_one_step(client, args):
-    """一键运行代理任务 (ProductId/PodId/提示词每次输入)"""
+    """一键运行代理任务 (向导式: 先问做什么, 手机默认值优先)"""
     product_id = args.product_id
     pod_id = args.pod_id
     user_prompt = args.prompt
 
-    # 缺哪个就交互式补哪个
+    # --- 第一步: 用户提示词 (每次输入, 任务的核心) ---
+    if not user_prompt:
+        print("\n--- 任务配置 ---")
+        print("描述你想在云手机上完成的操作, 例如:")
+        print('  "打开小红书搜索咖啡"  "查看桌面有什么"  "打开地图看看附近美食"')
+        user_prompt = input("\n请描述任务: ").strip()
+
+    if not user_prompt:
+        print("[错误] 任务描述不能为空!")
+        return
+
+    # --- 第二步: 云手机 (命令行参数 > 保存的默认手机 > 交互输入) ---
+    saved_pid, saved_pod = get_default_device()
+    if not product_id:
+        product_id = saved_pid
+    if not pod_id:
+        pod_id = saved_pod
+
     if not product_id or not pod_id:
-        product_id, pod_id = get_product_pod()
+        # 需要交互输入 (有默认值时允许回车沿用)
+        product_id, pod_id = get_product_pod(use_default=True)
         if not product_id:
             return
 
-    if not user_prompt:
-        print("\n--- 任务配置 ---")
-        user_prompt = input("请输入用户提示词 (你想让 Agent 做什么): ").strip()
-
-    if not user_prompt:
-        print("[错误] UserPrompt 不能为空!")
-        return
+    # 提示当前使用的手机 (命令行/默认值时不重复询问)
+    if args.product_id or args.pod_id:
+        pass  # 命令行显式指定, 已确认
+    elif (product_id, pod_id) == (saved_pid, saved_pod) and saved_pid:
+        print(f"[手机] 使用默认云手机: ProductId={mask_id(product_id)}  PodId={mask_id(pod_id)}")
 
     run_name = args.run_name or f"mua-task-{int(__import__('time').time())}"
 
-    # 高级参数
+    # 高级参数 (默认值折叠, 交互模式回车跳过)
     max_step = args.max_step if args.max_step else 100
     timeout = args.timeout if args.timeout else 300
     system_prompt = args.system_prompt or None
@@ -202,14 +303,16 @@ def cmd_run_one_step(client, args):
             input("系统提示词 (可选, 回车跳过): ").strip() or None
         )
 
-    # --- GPS 定位注入 (每次任务前询问) ---
+    # --- GPS 定位注入 (按任务智能询问) ---
     gps_info = None
     if args.gps:
-        # 非交互模式下命令行显式授权
+        # 命令行显式授权 (非交互模式唯一注入途径)
         gps_info = acquire_gps()
-    elif not args.no_interactive:
+    elif not args.no_interactive and needs_location(user_prompt):
+        # 任务与位置相关才询问; 无关任务自动跳过, 不打扰
         print("\n--- GPS 定位注入 ---")
-        if ask_location_permission():
+        print("[提示] 任务涉及位置, 可注入本机定位到云手机")
+        if ask_location_permission(user_prompt):
             gps_info = acquire_gps()
         else:
             print("[跳过] 已拒绝获取位置, 本次任务不注入 GpsInfo")
@@ -345,7 +448,7 @@ def interactive_menu(client):
         print("\n" + "=" * 50)
         print("  Mobile Use Agent - 交互式菜单")
         print("=" * 50)
-        print("  1. 运行代理任务  (每次输入实例/提示词)")
+        print("  1. 运行代理任务  (问答式向导, 默认手机回车沿用)")
         print("  2. 查询任务当前步骤")
         print("  3. 获取任务运行结果")
         print("  4. 取消代理任务")
@@ -360,39 +463,13 @@ def interactive_menu(client):
         choice = input("请选择操作: ").strip()
 
         if choice == "1":
-            product_id, pod_id = get_product_pod()
-            if not product_id:
-                continue
-            user_prompt = input("用户提示词: ").strip()
-            if not user_prompt:
-                print("[错误] 提示词不能为空!")
-                continue
-
-            run_name = input("运行名称 (回车自动生成): ").strip()
-            max_step_input = input("最大步数 [100]: ").strip()
-            max_step = int(max_step_input) if max_step_input else 100
-            timeout_input = input("超时时间(秒) [300]: ").strip()
-            timeout = int(timeout_input) if timeout_input else 300
-
-            # GPS 定位注入 (每次询问)
-            print("\n--- GPS 定位注入 ---")
-            gps_info = None
-            if ask_location_permission():
-                gps_info = acquire_gps()
-            else:
-                print("[跳过] 已拒绝获取位置, 本次任务不注入 GpsInfo")
-
-            result = client.run_and_wait(
-                run_name=run_name or None,
-                pod_id=pod_id,
-                product_id=product_id,
-                user_prompt=user_prompt,
-                max_step=max_step,
-                timeout=timeout,
-                gps_info=gps_info,
+            # 复用命令行向导 (同一套流程, 避免逻辑漂移)
+            fake_args = argparse.Namespace(
+                product_id="", pod_id="", prompt="", run_name="",
+                max_step=0, timeout=0, system_prompt="",
+                gps=False, no_interactive=False,
             )
-            print("\n[结果]")
-            print(format_result(result))
+            cmd_run_one_step(client, fake_args)
 
         elif choice == "2":
             run_id = input("请输入 RunId: ").strip()
@@ -484,6 +561,10 @@ def main():
     # logout - 删除本地凭证
     subparsers.add_parser("logout", help="删除本地保存的凭证")
 
+    # device - 查看/清除默认云手机
+    p_device = subparsers.add_parser("device", help="查看/清除默认云手机 (ProductId/PodId)")
+    p_device.add_argument("--clear", action="store_true", help="清除保存的默认手机")
+
     # run - 运行代理任务 (每次输入 ProductId/PodId/提示词)
     p_run = subparsers.add_parser("run", help="运行代理任务 (RunAgentTaskOneStep)")
     p_run.add_argument("--product-id", default="", help="云手机业务 ID")
@@ -548,6 +629,9 @@ def main():
         return
     if args.command == "logout":
         cmd_logout(args)
+        return
+    if args.command == "device":
+        cmd_device(args)
         return
 
     # ---------- 获取凭证 ----------
