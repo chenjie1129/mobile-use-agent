@@ -22,7 +22,7 @@ metadata:
 
 ## 检查可用性
 
-首次调用可能自动安装 Python 依赖（`pip install -r requirements.txt`）。入口优先用全局命令 `mua`（已 `./install.sh` 安装时），否则 `python3 scripts/cli.py`：
+首次调用可能需要 Python 依赖；推荐先让用户运行 `./install.sh`（自动创建独立 venv 并装好依赖，不污染系统 Python）。入口优先用全局命令 `mua`（已安装时），否则 `python3 scripts/cli.py`：
 
 ```sh
 mua whoami                       # 或: python3 scripts/cli.py whoami
@@ -32,7 +32,7 @@ mua whoami                       # 或: python3 scripts/cli.py whoami
 - 若用户表示**尚未开通 Mobile Use Agent 服务 / 没有云手机资源**（或问"ProductId/PodId 在哪找"），引导其查看 README「二、开始之前：一次性准备」——按官方四步指引依次完成：给云手机开权限（ServiceRoleForIPaaS + PaasServiceRole）→ 开通服务 → 创建业务（得 ProductId）→ 订购云手机资源（得 PodId）→ 创建密钥（得 AK/SK）。已开通过的用户无需此步骤。
 - 若任务目标是**云手机未预装的应用**（默认镜像只预装少量 App），先引导用户在 [MUA 控制台「发布 App」](https://www.volcengine.com/docs/6394/1223958?lang=zh) 安装到云手机，再执行任务。
 - 若任务执行中遇到**人脸识别验证**（如登录银行/支付类 App），引导用户用手机扫码完成验证（官方流程见 README「五、常见问题」）：云手机画面弹出二维码（或点"H5 扫码链接"）→ 手机扫码 → 手机端完成登录与人脸扫描 → 回控制台点"重新连接"。扫码期间云手机画面提示"连接异常"是正常现象。
-- 若依赖缺失，先执行 `pip install -r requirements.txt`。
+- 若依赖缺失，优先让用户运行 `./install.sh`（建独立环境），避免往系统 Python 装包。
 
 ## 执行用户请求的任务
 

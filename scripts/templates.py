@@ -5,30 +5,62 @@
   在"请描述任务"提示处直接输入模板序号 (如 2), 即可使用对应示例;
   也可以基于示例改写, 或完全自己描述。
 
-模板覆盖常见场景, 提示词刻意写得口语化、具体,
-让第一次使用的人一眼就懂"我能让它做什么"。
+模板分两类, 刻意把办公场景放在前面:
+  - 办公场景: 回客户消息 / 打卡 / 查邮件, 最能直观展示"AI 替你干活"的效果;
+  - 生活场景: 刷抖音 / 找餐厅 / 查天气, 让第一次使用的人一眼就懂"我能让它做什么"。
+
+提示词刻意写得口语化、具体, 拿到就能演示。
 """
 
 TASK_TEMPLATES = [
+    # ---- 通用: 先试手, 零成本 (环境自检) ----
     {
         "name": "看看桌面",
         "prompt": "查看云手机桌面上有什么文件或文件夹，列出所有内容，并简要说明每项是什么",
+        "scene": "通用",
+    },
+    # ---- 办公: 最能体现"AI 替你干活"的演示场景 ----
+    {
+        "name": "企业微信回消息",
+        "prompt": "打开企业微信，查看未读消息，把最新的一条回复：收到，今天下班前给你反馈",
+        "scene": "办公",
+        "apps": ["企业微信"],
+    },
+    {
+        "name": "钉钉打卡",
+        "prompt": "打开钉钉，点击「考勤打卡」，完成上班打卡，并告诉我打卡结果",
+        "scene": "办公",
+        "apps": ["钉钉"],
+    },
+    {
+        "name": "查收邮件并汇报",
+        "prompt": "打开邮箱，查看最新一封未读邮件，告诉我发件人、主题和一句话摘要",
+        "scene": "办公",
+        "apps": ["邮箱"],
+    },
+    # ---- 生活: 生活化场景, 让新手一眼就懂 ----
+    {
+        "name": "打开微信发消息",
+        "prompt": "打开微信，给「文件传输助手」发一条消息：你好，这条消息来自云端手机",
+        "scene": "生活",
+        "apps": ["微信"],
     },
     {
         "name": "打开抖音搜美食",
         "prompt": "打开抖音，搜索「美食」，看看有哪些热门视频，简单介绍前三个",
+        "scene": "生活",
+        "apps": ["抖音"],
     },
     {
         "name": "看看附近有什么吃的",
         "prompt": "打开地图应用，搜索我附近的餐厅，列出距离最近的 3 家以及它们的评分",
-    },
-    {
-        "name": "打开微信发消息",
-        "prompt": "打开微信，给「文件传输助手」发一条消息：你好，这条消息来自云端手机",
+        "scene": "生活",
+        "apps": ["地图"],
     },
     {
         "name": "查一下今天天气",
         "prompt": "打开浏览器，查询今天北京的天气，告诉我温度和适不适合出门",
+        "scene": "生活",
     },
 ]
 
@@ -54,20 +86,35 @@ def resolve_template(choice: str):
     return choice, None
 
 
-def format_template_menu(max_items: int = 5) -> str:
-    """生成模板菜单文本 (用于任务输入前的引导)
+def format_template_menu(max_items: int | None = None) -> str:
+    """生成模板菜单文本 (按场景分组, 用于任务输入前的引导)
 
     Args:
-        max_items: 最多展示前几个模板
+        max_items: 最多展示前几个模板 (None 表示全部)
 
     Returns:
-        多行文本, 如 "  1) 看看桌面  2) 打开抖音搜美食 ..."
+        多行文本, 如 "  通用  1) 看看桌面 ..."
     """
     lines = ["第一次不知道说什么？直接输入序号，用现成的例子："]
-    row = []
-    for i, tpl in enumerate(TASK_TEMPLATES[:max_items], start=1):
-        row.append(f"{i}) {tpl['name']}")
-    # 每行放 3 个, 避免单行过长
-    for i in range(0, len(row), 3):
-        lines.append("    " + "  ".join(row[i:i + 3]))
+    items = TASK_TEMPLATES if max_items is None else TASK_TEMPLATES[:max_items]
+
+    # 按场景分组, 保持模板原有顺序与序号
+    groups: dict[str, list] = {}
+    order: list[str] = []
+    for i, tpl in enumerate(items, start=1):
+        scene = tpl.get("scene", "通用")
+        if scene not in groups:
+            groups[scene] = []
+            order.append(scene)
+        groups[scene].append((i, tpl))
+
+    for scene in order:
+        cells = []
+        for i, tpl in groups[scene]:
+            mark = "*" if tpl.get("apps") else ""
+            cells.append(f"{i}) {tpl['name']}{mark}")
+        lines.append(f"  {scene}  " + "  ".join(cells))
+
+    if any(t.get("apps") for t in items):
+        lines.append("  带 * 的示例需要云手机上已安装对应 App（可在 MUA 控制台「发布 App」安装）")
     return "\n".join(lines)

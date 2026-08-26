@@ -9,8 +9,11 @@
 #   mua status --run-id RUN_XXX
 #   mua result / cancel / list / whoami / device / logout
 #
-# 安装: 在 skill 根目录执行 ./install.sh (软链本脚本到 ~/.local/bin/mua)
+# 安装: 在 skill 根目录执行 ./install.sh
+#   - 创建独立 Python 环境并装好依赖 (~/.local/share/mobile-use-agent/venv)
+#   - 软链本脚本到 ~/.local/bin/mua
 # 本脚本支持被软链接调用 (自动解析真实路径)。
+# 未安装时也可直接运行 (自动探测可用的 Python, 见下方查找逻辑)。
 
 # --- 解析脚本真实路径 (兼容软链接) ---
 SOURCE="${BASH_SOURCE[0]}"
@@ -22,8 +25,11 @@ done
 SKILL_DIR="$(cd -P "$(dirname "$SOURCE")/.." >/dev/null 2>&1 && pwd)"
 
 # --- 查找可用的 Python (能 import volcenginesdkcore 的优先) ---
+# 优先级: ① install.sh 创建的独立环境 > ② 任何现成的 SDK 环境 > ③ 系统 python3
+VENV_PY="${VENV_DIR:-$HOME/.local/share/mobile-use-agent/venv}/bin/python"
 PY=""
 for candidate in \
+  "$VENV_PY" \
   "${HOME}/.workbuddy/binaries/python/envs/default/bin/python" \
   "$(command -v python3)" \
   "$(command -v python)"; do
@@ -50,13 +56,12 @@ if [ -z "$PY" ]; then
   exit 1
 fi
 
-# SDK 缺失提示
+# SDK 缺失提示: 不往系统 Python 装包, 引导用户走独立环境
 if ! "$PY" -c "import volcenginesdkcore" >/dev/null 2>&1; then
-  echo "提示: 缺少 Python 依赖, 正在检查... (首次使用需安装)" >&2
-  "$PY" -m pip install -r "$SKILL_DIR/requirements.txt" >&2 || {
-    echo "错误: 依赖安装失败, 请手动执行: pip install -r $SKILL_DIR/requirements.txt" >&2
-    exit 1
-  }
+  echo "提示: 缺少 Python 依赖 (volcengine-python-sdk)。" >&2
+  echo "      请先运行安装脚本, 它会创建独立环境, 不会改动系统 Python:" >&2
+  echo "          cd \"$SKILL_DIR\" && ./install.sh" >&2
+  exit 1
 fi
 
 exec "$PY" "$SKILL_DIR/scripts/cli.py" "$@"
