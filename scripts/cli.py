@@ -3,8 +3,7 @@
 Mobile Use Agent - 交互式 CLI
 
 凭证策略:
-  - AK/SK: 首次运行时配置, 保存到本地 (~/.mobile_use_agent/credentials.json)
-           后续运行自动加载, 无需重复输入
+  - AK/SK: 仅从环境变量或当前交互会话读取，不写入磁盘或命令行参数
   - ProductId / PodId: 可选保存为"默认手机" (setup 时配置),
            之后运行任务直接回车沿用; 命令行参数始终优先
   - 用户提示词: 每次发起任务时输入
@@ -13,7 +12,7 @@ Mobile Use Agent - 交互式 CLI
   # 交互式模式 (首次运行会引导配置 AK/SK)
   python cli.py
 
-  # 重新配置凭证 (可选配置默认手机)
+  # 检查环境变量凭证 (可选配置默认手机)
   python cli.py setup
 
   # 查看当前凭证状态 / 默认手机
@@ -45,9 +44,13 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from mobile_use_agent import (
     MobileUseAgentClient,
+    extract_results,
     format_steps,
     format_result,
 )
+from cloud_phone import VePhoneClient
+from control_policy import ConfirmationRequired, risk_for_action
+from device_orchestrator import DeviceOrchestrator
 from error_codes import (
     MobileUseError,
     format_error,
@@ -72,6 +75,36 @@ from templates import resolve_template, format_template_menu
 def print_json(data):
     """格式化输出 JSON"""
     print(json.dumps(data, indent=2, ensure_ascii=False, default=str))
+
+
+def print_json_event(data):
+    print(json.dumps(data, ensure_ascii=False, default=str), flush=True)
+
+
+def get_cloud_phone_client(client: MobileUseAgentClient) -> VePhoneClient:
+    return VePhoneClient(
+        access_key=client.ak,
+        secret_key=client.sk,
+        region=client.region,
+    )
+
+
+def print_resolution(resolution, agent_json: bool = False):
+    payload = resolution.to_dict()
+    if agent_json:
+        print_json(payload)
+        return
+    print(f"[设备准备] {resolution.message}")
+    if resolution.product_id:
+        print(f"  ProductId: {resolution.product_id}")
+    if resolution.pod_id:
+        print(f"  PodId: {resolution.pod_id}")
+    if resolution.candidates:
+        print("  可选项:")
+        for index, candidate in enumerate(resolution.candidates, 1):
+            print(f"    {index}. {candidate}")
+    if resolution.next_action:
+        print(f"  下一步: {json.dumps(resolution.next_action, ensure_ascii=False)}")
 
 
 def show_api_error(e: MobileUseError, context: str = ""):
@@ -122,13 +155,17 @@ def extract_result_status(result):
     return ok, result_text
 
 
-def get_client(force_setup: bool = False) -> MobileUseAgentClient:
+def get_client(
+    force_setup: bool = False,
+    quiet: bool = False,
+) -> MobileUseAgentClient:
     """获取已配置凭证的客户端
-
-    优先使用命令行传入的 --ak/--sk;
-    否则从本地加载; 本地也没有则引导首次配置。
     """
-    ak, sk = get_credentials_interactive(force_setup=force_setup)
+    credentials = None if force_setup else load_credentials()
+    if quiet and credentials:
+        ak, sk = credentials
+    else:
+        ak, sk = get_credentials_interactive(force_setup=force_setup)
     return MobileUseAgentClient(ak=ak, sk=sk)
 
 
@@ -169,17 +206,14 @@ def get_product_pod(use_default: bool = True):
 
 
 def cmd_setup(args):
-    """重新配置 AK/SK 凭证 (可选配置默认手机)"""
-    if has_credentials():
-        saved = load_credentials()
-        if saved:
-            print(f"当前已保存凭证: AK = {mask_secret(saved[0])}")
-            confirm = input("将覆盖已有凭证, 继续? [y/N]: ").strip().lower()
-            if confirm != "y":
-                print("已取消")
-                return
-
-    ak, sk = get_credentials_interactive(force_setup=True)
+    """检查环境变量凭证，并可保存非敏感默认设备。"""
+    saved = load_credentials()
+    if not saved:
+        print("AK/SK 不再写入本地文件。请通过凭证代理注入环境变量：")
+        print("  VOLC_ACCESSKEY / VOLC_SECRETKEY")
+        print("兼容变量：VOLC_ACCESS_KEY / VOLC_SECRET_KEY")
+        return
+    print(f"当前环境变量凭证: AK = {mask_secret(saved[0])}")
 
     # 可选: 配置默认云手机
     print("\n--- 默认云手机 (可选) ---")
@@ -215,7 +249,7 @@ def cmd_whoami(args):
     saved = load_credentials()
     if saved:
         ak, sk = saved
-        print(f"凭证文件: {CREDENTIALS_FILE}")
+        print("凭证来源: 环境变量")
         print(f"AK:       {mask_secret(ak)}")
         print(f"SK:       {mask_secret(sk)}")
         saved_pid, saved_pod = get_default_device()
@@ -223,10 +257,10 @@ def cmd_whoami(args):
             print(f"默认手机: ProductId={mask_id(saved_pid)}  PodId={mask_id(saved_pod)}")
         else:
             print("默认手机: (未设置, 运行任务时临时输入即可)")
-        print("\n如需重新配置, 运行: python cli.py setup")
+        print("\n如需更换凭证，请更新 VOLC_ACCESSKEY/VOLC_SECRETKEY")
     else:
-        print("尚未配置凭证")
-        print(f"首次运行任意命令时会自动引导配置, 或运行: python cli.py setup")
+        print("当前进程没有凭证")
+        print("请通过凭证代理设置 VOLC_ACCESSKEY/VOLC_SECRETKEY")
 
 
 def cmd_device(args):
@@ -250,15 +284,8 @@ def cmd_device(args):
 
 
 def cmd_logout(args):
-    """删除本地凭证"""
-    if not has_credentials():
-        print("没有已保存的凭证")
-        return
-
-    saved = load_credentials()
-    if saved:
-        print(f"将删除凭证: AK = {mask_secret(saved[0])}")
-    confirm = input("确认删除? [y/N]: ").strip().lower()
+    """删除本地非敏感配置及旧版明文凭证。"""
+    confirm = input("确认删除默认设备配置和旧版凭证文件? [y/N]: ").strip().lower()
     if confirm != "y":
         print("已取消")
         return
@@ -266,7 +293,187 @@ def cmd_logout(args):
     if delete_credentials():
         print(f"[成功] 已删除 {CREDENTIALS_FILE}")
     else:
-        print("[失败] 删除失败")
+        print("[提示] 没有本地配置；环境变量需由凭证代理撤销")
+
+
+def resolve_device_for_run(client, args):
+    """Resolve ProductId/PodId and return None when user action is required."""
+    saved_pid, saved_pod = get_default_device()
+    product_id = args.product_id or saved_pid
+    pod_id = args.pod_id or saved_pod
+    orchestrator = DeviceOrchestrator(get_cloud_phone_client(client))
+
+    create_params = None
+    if getattr(args, "create_pod", False):
+        create_params = {
+            "configuration_code": args.configuration_code,
+            "dc": args.dc,
+            "resource_type": args.resource_type,
+            "pod_name": args.pod_name,
+            "image_id": args.image_id,
+            "phone_template_id": args.phone_template_id,
+        }
+
+    while True:
+        resolution = orchestrator.resolve(
+            product_id=product_id,
+            pod_id=pod_id,
+            auto_power_on=getattr(args, "auto_power_on", False),
+            confirmation_token=getattr(args, "confirm_action", ""),
+            create_params=create_params,
+        )
+        if resolution.ready:
+            if (resolution.product_id, resolution.pod_id) != (saved_pid, saved_pod):
+                set_default_device(resolution.product_id, resolution.pod_id)
+            return resolution.product_id, resolution.pod_id
+
+        if args.no_interactive or getattr(args, "agent_json", False):
+            print_resolution(resolution, agent_json=True)
+            return None
+
+        if resolution.status in {
+            "product_selection_required",
+            "pod_selection_required",
+        }:
+            print_resolution(resolution)
+            selected = input("请选择序号: ").strip()
+            if not selected.isdigit() or not 1 <= int(selected) <= len(
+                resolution.candidates
+            ):
+                print("[错误] 无效序号")
+                return None
+            selected_id = resolution.candidates[int(selected) - 1]["id"]
+            if resolution.status == "product_selection_required":
+                product_id, pod_id = selected_id, ""
+            else:
+                pod_id = selected_id
+            continue
+
+        print_resolution(resolution)
+        return None
+
+
+def cmd_resolve_device(client, args):
+    orchestrator = DeviceOrchestrator(get_cloud_phone_client(client))
+    create_params = None
+    if args.create_pod:
+        create_params = {
+            "configuration_code": args.configuration_code,
+            "dc": args.dc,
+            "resource_type": args.resource_type,
+            "pod_name": args.pod_name,
+            "image_id": args.image_id,
+            "phone_template_id": args.phone_template_id,
+        }
+    resolution = orchestrator.resolve(
+        product_id=args.product_id,
+        pod_id=args.pod_id,
+        auto_power_on=args.auto_power_on,
+        confirmation_token=args.confirm_action,
+        create_params=create_params,
+    )
+    if resolution.ready and args.save_default:
+        set_default_device(resolution.product_id, resolution.pod_id)
+    print_resolution(resolution, agent_json=args.agent_json)
+
+
+def cmd_phone_action(client, args):
+    try:
+        params = json.loads(args.params_json or "{}")
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"--params-json 不是合法 JSON: {exc.msg}") from exc
+    if not isinstance(params, dict):
+        raise ValueError("--params-json 必须是 JSON 对象")
+
+    cloud_client = get_cloud_phone_client(client)
+    try:
+        result = cloud_client.controlled_action(
+            action=args.action,
+            params=params,
+            json_body=not args.query,
+            confirmation_token=args.confirm_action,
+        )
+    except ConfirmationRequired as exc:
+        print_json(exc.to_dict())
+        return
+    print_json(
+        {
+            "status": "completed",
+            "action": args.action,
+            "risk": risk_for_action(args.action).value,
+            "result": result,
+        }
+    )
+
+
+def run_and_wait_agent_json(client, **kwargs):
+    """Run a MUA task and emit stable JSONL lifecycle events."""
+    poll_interval = kwargs.pop("poll_interval", 5)
+    timeout = kwargs.get("timeout", 300)
+    response = client.run_agent_task_one_step(**kwargs)
+    run_id = response.get("RunId", "")
+    thread_id = response.get("ThreadId", "")
+    if not run_id:
+        print_json_event(
+            {
+                "event": "error",
+                "status": "invalid_response",
+                "response": response,
+            }
+        )
+        return response
+
+    print_json_event(
+        {
+            "event": "started",
+            "run_id": run_id,
+            "thread_id": thread_id,
+        }
+    )
+    started_at = time.time()
+    seen_count = 0
+    while time.time() - started_at <= timeout + 60:
+        time.sleep(poll_interval)
+        step_response = client.list_agent_run_current_step(run_id)
+        steps = extract_results(step_response)
+        for index in range(seen_count, len(steps)):
+            print_json_event(
+                {
+                    "event": "progress",
+                    "run_id": run_id,
+                    "step_index": index + 1,
+                    "step": steps[index],
+                }
+            )
+        seen_count = len(steps)
+        try:
+            result = client.get_agent_result(run_id)
+        except MobileUseError as exc:
+            if exc.category == CATEGORY_AUTH:
+                raise
+            continue
+        inner = result.get("Result") if isinstance(result, dict) else None
+        terminal = inner if isinstance(inner, dict) else result
+        if isinstance(terminal, dict) and terminal.get("IsSuccess") is not None:
+            print_json_event(
+                {
+                    "event": "result",
+                    "run_id": run_id,
+                    "thread_id": thread_id,
+                    "result": result,
+                }
+            )
+            return result
+
+    payload = {
+        "event": "error",
+        "status": "client_timeout",
+        "run_id": run_id,
+        "thread_id": thread_id,
+        "timeout_seconds": timeout + 60,
+    }
+    print_json_event(payload)
+    return payload
 
 
 def cmd_run_one_step(client, args):
@@ -277,6 +484,14 @@ def cmd_run_one_step(client, args):
 
     # --- 第一步: 用户提示词 (每次输入, 任务的核心) ---
     if not user_prompt:
+        if args.no_interactive or getattr(args, "agent_json", False):
+            print_json(
+                {
+                    "status": "prompt_required",
+                    "message": "--prompt is required in non-interactive mode",
+                }
+            )
+            return
         print("\n--- 任务配置 ---")
         print("描述你想在云手机上完成的操作。")
         # 0 基础用户引导: 展示现成示例, 输入序号即可用
@@ -294,24 +509,16 @@ def cmd_run_one_step(client, args):
         print("[错误] 任务描述不能为空!")
         return
 
-    # --- 第二步: 云手机 (命令行参数 > 保存的默认手机 > 交互输入) ---
-    saved_pid, saved_pod = get_default_device()
-    if not product_id:
-        product_id = saved_pid
-    if not pod_id:
-        pod_id = saved_pod
-
-    if not product_id or not pod_id:
-        # 需要交互输入 (有默认值时允许回车沿用)
-        product_id, pod_id = get_product_pod(use_default=True)
-        if not product_id:
-            return
-
-    # 提示当前使用的手机 (命令行/默认值时不重复询问)
-    if args.product_id or args.pod_id:
-        pass  # 命令行显式指定, 已确认
-    elif (product_id, pod_id) == (saved_pid, saved_pod) and saved_pid:
-        print(f"[手机] 使用默认云手机: ProductId={mask_id(product_id)}  PodId={mask_id(pod_id)}")
+    # --- 第二步: 云手机 (显式参数 > 默认设备 > 自动发现/受控创建) ---
+    resolved = resolve_device_for_run(client, args)
+    if not resolved:
+        return
+    product_id, pod_id = resolved
+    if not getattr(args, "agent_json", False):
+        print(
+            f"[手机] ProductId={mask_id(product_id)}  "
+            f"PodId={mask_id(pod_id)}"
+        )
 
     run_name = args.run_name or f"mua-task-{int(__import__('time').time())}"
 
@@ -320,7 +527,7 @@ def cmd_run_one_step(client, args):
     timeout = args.timeout if args.timeout else 300
     system_prompt = args.system_prompt or None
 
-    if not args.no_interactive:
+    if not args.no_interactive and not getattr(args, "agent_json", False):
         print(f"\n--- 高级参数 (回车使用默认值) ---")
         max_step_input = input(f"最大步数 [{max_step}]: ").strip()
         if max_step_input:
@@ -336,8 +543,18 @@ def cmd_run_one_step(client, args):
     gps_info = None
     if args.gps:
         # 命令行显式授权 (非交互模式唯一注入途径)
-        gps_info = acquire_gps(prompt=user_prompt, allow_manual=not args.no_interactive)
-    elif not args.no_interactive and needs_location(user_prompt):
+        gps_info = acquire_gps(
+            prompt=user_prompt,
+            verbose=not getattr(args, "agent_json", False),
+            allow_manual=not (
+                args.no_interactive or getattr(args, "agent_json", False)
+            ),
+        )
+    elif (
+        not args.no_interactive
+        and not getattr(args, "agent_json", False)
+        and needs_location(user_prompt)
+    ):
         # 任务与位置相关才询问; 无关任务自动跳过, 不打扰
         print("\n--- GPS 定位注入 ---")
         print("[提示] 任务涉及位置, 可注入本机定位到云手机")
@@ -355,16 +572,20 @@ def cmd_run_one_step(client, args):
 
     # --- 运行并等待 (统计耗时) ---
     t0 = time.time()
-    result = client.run_and_wait(
-        run_name=run_name,
-        pod_id=pod_id,
-        product_id=product_id,
-        user_prompt=user_prompt,
-        max_step=max_step,
-        timeout=timeout,
-        system_prompt=system_prompt,
-        gps_info=gps_info,
-    )
+    run_kwargs = {
+        "run_name": run_name,
+        "pod_id": pod_id,
+        "product_id": product_id,
+        "user_prompt": user_prompt,
+        "max_step": max_step,
+        "timeout": timeout,
+        "system_prompt": system_prompt,
+        "gps_info": gps_info,
+    }
+    if getattr(args, "agent_json", False):
+        run_and_wait_agent_json(client, **run_kwargs)
+        return
+    result = client.run_and_wait(**run_kwargs)
     elapsed = int(time.time() - t0)
 
     # 成功反馈: 明确告诉用户"完成/未成功"和用时 (确定感)
@@ -503,7 +724,7 @@ def interactive_menu(client):
         print("  6. 创建代理运行配置")
         print("  7. 查询代理运行配置列表")
         print("  8. 删除代理运行配置")
-        print("  9. 重新配置凭证 (AK/SK)")
+        print("  9. 检查凭证与默认设备")
         print("  0. 退出")
         print("=" * 50)
 
@@ -514,7 +735,7 @@ def interactive_menu(client):
             fake_args = argparse.Namespace(
                 product_id="", pod_id="", prompt="", run_name="",
                 max_step=0, timeout=0, system_prompt="",
-                gps=False, no_interactive=False,
+                gps=False, no_interactive=False, agent_json=False,
             )
             cmd_run_one_step(client, fake_args)
 
@@ -570,8 +791,7 @@ def interactive_menu(client):
                 print_json(resp)
 
         elif choice == "9":
-            get_credentials_interactive(force_setup=True)
-            client = get_client()
+            cmd_setup(argparse.Namespace())
 
         elif choice == "0":
             print("再见!")
@@ -587,26 +807,16 @@ def main():
         epilog=__doc__,
     )
 
-    # 全局凭证参数 (可选, 覆盖本地保存的凭证)
-    parser.add_argument(
-        "--ak", default=os.environ.get("VOLC_ACCESSKEY", ""),
-        help="Access Key ID (不传则使用本地保存的凭证)"
-    )
-    parser.add_argument(
-        "--sk", default=os.environ.get("VOLC_SECRETKEY", ""),
-        help="Secret Access Key (不传则使用本地保存的凭证)"
-    )
-
     subparsers = parser.add_subparsers(dest="command", help="操作命令")
 
-    # setup - 配置凭证
-    subparsers.add_parser("setup", help="配置/重新配置 AK/SK 凭证")
+    # setup - 检查环境变量凭证并配置默认设备
+    subparsers.add_parser("setup", help="检查凭证并配置默认设备")
 
     # whoami - 查看凭证状态
     subparsers.add_parser("whoami", help="查看当前凭证状态")
 
-    # logout - 删除本地凭证
-    subparsers.add_parser("logout", help="删除本地保存的凭证")
+    # logout - 删除本地非敏感配置和旧版凭证文件
+    subparsers.add_parser("logout", help="删除默认设备配置和旧版凭证文件")
 
     # device - 查看/清除默认云手机
     p_device = subparsers.add_parser("device", help="查看/清除默认云手机 (ProductId/PodId)")
@@ -626,6 +836,48 @@ def main():
         help="允许获取当前位置并注入 GpsInfo (非交互模式下自动获取, 不再询问)"
     )
     p_run.add_argument("--no-interactive", action="store_true", help="跳过交互式参数确认")
+    p_run.add_argument("--agent-json", action="store_true", help="以 JSONL 输出任务事件")
+    p_run.add_argument("--create-pod", action="store_true", help="找不到实例时提交创建请求")
+    p_run.add_argument("--auto-power-on", action="store_true", help="找到关机实例时提交开机请求")
+    p_run.add_argument("--configuration-code", default="", help="创建实例使用的规格")
+    p_run.add_argument("--dc", default="", help="创建实例使用的机房")
+    p_run.add_argument("--resource-type", type=int, choices=[100, 200], help="资源类型")
+    p_run.add_argument("--pod-name", default="", help="创建实例使用的名称")
+    p_run.add_argument("--image-id", default="", help="创建实例使用的镜像")
+    p_run.add_argument("--phone-template-id", default="", help="创建实例使用的机型模板")
+    p_run.add_argument("--confirm-action", default="", help="状态变更的精确确认令牌")
+
+    # resolve-device - Agent 友好的设备发现和准备状态机
+    p_resolve = subparsers.add_parser(
+        "resolve-device",
+        help="发现可用 Product/Pod，缺失时返回结构化下一步",
+    )
+    p_resolve.add_argument("--product-id", default="", help="指定业务 ID")
+    p_resolve.add_argument("--pod-id", default="", help="指定实例 ID")
+    p_resolve.add_argument("--create-pod", action="store_true", help="没有实例时创建")
+    p_resolve.add_argument("--auto-power-on", action="store_true", help="实例关机时开机")
+    p_resolve.add_argument("--configuration-code", default="", help="创建实例使用的规格")
+    p_resolve.add_argument("--dc", default="", help="创建实例使用的机房")
+    p_resolve.add_argument("--resource-type", type=int, choices=[100, 200], help="资源类型")
+    p_resolve.add_argument("--pod-name", default="", help="实例名称")
+    p_resolve.add_argument("--image-id", default="", help="镜像 ID")
+    p_resolve.add_argument("--phone-template-id", default="", help="机型模板 ID")
+    p_resolve.add_argument("--confirm-action", default="", help="状态变更的精确确认令牌")
+    p_resolve.add_argument("--save-default", action="store_true", help="就绪后保存默认设备")
+    p_resolve.add_argument("--agent-json", action="store_true", help="只输出结构化 JSON")
+    p_resolve.add_argument("--no-interactive", action="store_true", default=True)
+
+    # phone-action - P0/P1/P2 通用控制面入口
+    p_phone = subparsers.add_parser(
+        "phone-action",
+        help="调用受风险策略保护的 ACEP OpenAPI Action",
+    )
+    p_phone.add_argument("action", help="OpenAPI Action 名称")
+    p_phone.add_argument("--params-json", default="{}", help="请求参数 JSON 对象")
+    p_phone.add_argument("--query", action="store_true", help="使用 Query 参数而非 JSON Body")
+    p_phone.add_argument("--confirm-action", default="", help="状态变更的精确确认令牌")
+    p_phone.add_argument("--no-interactive", action="store_true", default=True)
+    p_phone.set_defaults(agent_json=True)
 
     # status - 查询当前步骤
     p_status = subparsers.add_parser("status", help="查询任务当前步骤")
@@ -682,18 +934,26 @@ def main():
         return
 
     # ---------- 获取凭证 ----------
-    ak = args.ak
-    sk = args.sk
-
-    if ak and sk:
-        # 命令行/环境变量显式传入: 直接使用, 不读本地
-        client = MobileUseAgentClient(ak=ak, sk=sk)
-    else:
-        # 首次使用: 先展示欢迎页, 再引导配置并保存
-        if not has_credentials():
-            print_welcome()
-        # 本地加载 -> 首次引导配置并保存
-        client = get_client()
+    if getattr(args, "no_interactive", False) and not has_credentials():
+        print_json(
+            {
+                "status": "credentials_required",
+                "message": "请通过凭证代理注入 VOLC_ACCESSKEY/VOLC_SECRETKEY",
+                "required_environment": [
+                    "VOLC_ACCESSKEY",
+                    "VOLC_SECRETKEY",
+                ],
+            }
+        )
+        return
+    if not has_credentials():
+        print_welcome()
+    client = get_client(
+        quiet=(
+            getattr(args, "no_interactive", False)
+            or getattr(args, "agent_json", False)
+        )
+    )
 
     # ---------- 无命令 -> 交互式菜单 ----------
     if not args.command:
@@ -703,6 +963,8 @@ def main():
     # ---------- 分发命令 ----------
     handlers = {
         "run": cmd_run_one_step,
+        "resolve-device": cmd_resolve_device,
+        "phone-action": cmd_phone_action,
         "status": cmd_status,
         "result": cmd_result,
         "cancel": cmd_cancel,
@@ -724,9 +986,33 @@ def main():
     except SystemExit:
         raise
     except MobileUseError as e:
+        if getattr(args, "agent_json", False):
+            print_json_event(
+                {
+                    "event": "error",
+                    "status": "api_error",
+                    "code": e.code,
+                    "code_n": e.code_n,
+                    "category": e.category,
+                    "retryable": e.retryable,
+                    "message": e.desc or e.message,
+                    "user_action": e.advice,
+                }
+            )
+            return
         # 带错误码的 API 错误: 展示中文描述 + 操作建议 + 分类引导
         show_api_error(e)
     except Exception as e:
+        if getattr(args, "agent_json", False):
+            print_json_event(
+                {
+                    "event": "error",
+                    "status": "client_error",
+                    "error_type": type(e).__name__,
+                    "message": str(e)[:500],
+                }
+            )
+            return
         # 其他异常: 友好呈现, 凭证失效时给出重新配置提示
         msg = str(e)
         print(f"\n[错误] {type(e).__name__}: {msg[:500]}")

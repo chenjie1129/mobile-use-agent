@@ -4,6 +4,11 @@
 
 SDK: `volcengine-python-sdk`（模块 `volcenginesdkcore`），使用 `Configuration` + `UniversalApi` + `UniversalInfo` + `Flatten` 做通用调用。
 
+云手机资源控制面使用独立的 `ACEP` 服务和按 Action 选择的版本（当前主要为
+`2025-05-01`，`ListOperableProduct` 为 `2023-10-30`）。完整 Action 映射由
+`scripts/cloud_phone.py` 维护，风险与 Agent 状态协议见
+[`control_plane.md`](control_plane.md)。
+
 ## 接口列表
 
 | 客户端方法 | Action | 方法 | 说明 |

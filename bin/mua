@@ -3,7 +3,7 @@
 #
 # 用法:
 #   mua                     # 交互式菜单
-#   mua setup               # 配置 AK/SK (可选默认手机)
+#   mua setup               # 检查环境变量凭证 (可选默认手机)
 #   mua run                 # 问答式向导运行任务
 #   mua run --prompt "..." --product-id PID --pod-id POD
 #   mua status --run-id RUN_XXX

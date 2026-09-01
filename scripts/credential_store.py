@@ -1,15 +1,7 @@
-"""
-凭证持久化管理
+"""非敏感配置与环境变量凭证管理。
 
-AK/SK 在首次运行时由用户配置，保存到本地文件:
-    ~/.mobile_use_agent/credentials.json
-
-文件权限设为 600 (仅所有者可读写)，后续运行自动加载，无需重复输入。
-
-ProductId / PodId (默认云手机) 也可选持久化:
-    - setup 时可选配置默认手机, 之后 run 时回车即可沿用, 无需每次查找
-    - 命令行 --product-id / --pod-id 始终优先于保存的默认值
-    - 用户提示词每次运行时输入 (不做持久化)
+AK/SK 只从环境变量读取，绝不写入本地文件。配置文件仅保存默认
+ProductId/PodId，便于 Agent 在后续运行中复用已选择的设备。
 """
 
 import json
@@ -19,9 +11,12 @@ import getpass
 from pathlib import Path
 from typing import Optional, Tuple
 
-# 凭证文件位置: 用户主目录下
+# 非敏感配置文件位置
 CREDENTIALS_DIR = Path.home() / ".mobile_use_agent"
-CREDENTIALS_FILE = CREDENTIALS_DIR / "credentials.json"
+CREDENTIALS_FILE = CREDENTIALS_DIR / "profile.json"
+LEGACY_CREDENTIALS_FILE = CREDENTIALS_DIR / "credentials.json"
+ACCESS_KEY_ENV_NAMES = ("VOLC_ACCESSKEY", "VOLC_ACCESS_KEY")
+SECRET_KEY_ENV_NAMES = ("VOLC_SECRETKEY", "VOLC_SECRET_KEY")
 
 
 def _secret_input(prompt: str) -> str:
@@ -33,7 +28,7 @@ def _secret_input(prompt: str) -> str:
 
 
 def _read_file() -> dict:
-    """读取凭证文件内容 (不存在/损坏时返回空 dict)"""
+    """读取非敏感配置文件，不存在或损坏时返回空字典。"""
     if not CREDENTIALS_FILE.exists():
         return {}
     try:
@@ -54,21 +49,53 @@ def _write_file(data: dict) -> Path:
     return CREDENTIALS_FILE
 
 
+def _migrate_legacy_profile() -> None:
+    """Remove legacy plaintext secrets while preserving non-sensitive IDs."""
+    if not LEGACY_CREDENTIALS_FILE.exists():
+        return
+    try:
+        with open(LEGACY_CREDENTIALS_FILE, "r", encoding="utf-8") as f:
+            legacy = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        legacy = {}
+    safe = _read_file()
+    for key in ("product_id", "pod_id"):
+        if legacy.get(key) and not safe.get(key):
+            safe[key] = legacy[key]
+    if safe:
+        _write_file(safe)
+    LEGACY_CREDENTIALS_FILE.unlink(missing_ok=True)
+
+
 def has_credentials() -> bool:
-    """检查是否已保存凭证"""
-    return CREDENTIALS_FILE.exists()
+    """检查当前进程是否已通过环境变量获得完整凭证。"""
+    return load_credentials() is not None
 
 
 def load_credentials() -> Optional[Tuple[str, str]]:
-    """加载已保存的凭证 (兼容旧接口)
+    """从环境变量加载凭证。
 
     Returns:
-        (ak, sk) 元组; 未保存或文件损坏时返回 None
+        (ak, sk) 元组；环境变量未完整设置时返回 None。
     """
-    data = _read_file()
-    ak = data.get("ak", "")
-    sk = data.get("sk", "")
+    ak = next(
+        (
+            os.environ.get(name, "")
+            for name in ACCESS_KEY_ENV_NAMES
+            if os.environ.get(name)
+        ),
+        "",
+    )
+    sk = next(
+        (
+            os.environ.get(name, "")
+            for name in SECRET_KEY_ENV_NAMES
+            if os.environ.get(name)
+        ),
+        "",
+    )
     if ak and sk:
+        _migrate_legacy_profile()
         return ak, sk
     return None
 
@@ -77,12 +104,13 @@ def load_profile() -> dict:
     """加载完整配置档案
 
     Returns:
-        dict: {ak, sk, product_id, pod_id} 各项可能为空字符串
+        dict: {ak, sk, product_id, pod_id}。AK/SK 来自环境变量。
     """
     data = _read_file()
+    credentials = load_credentials() or ("", "")
     return {
-        "ak": data.get("ak", ""),
-        "sk": data.get("sk", ""),
+        "ak": credentials[0],
+        "sk": credentials[1],
         "product_id": data.get("product_id", ""),
         "pod_id": data.get("pod_id", ""),
     }
@@ -94,9 +122,7 @@ def save_credentials(
     product_id: str = "",
     pod_id: str = "",
 ) -> Path:
-    """保存凭证 (可选附带默认云手机) 到本地文件
-
-    文件权限设为 600 (仅所有者可读写)。
+    """仅保存非敏感设备配置，AK/SK 不落盘。
 
     Args:
         ak: Access Key ID
@@ -105,18 +131,24 @@ def save_credentials(
         pod_id: 默认云手机实例 ID (可选, 留空不保存)
 
     Returns:
-        保存的文件路径
+        非敏感配置文件路径
     """
     if not ak or not sk:
         raise ValueError("AK/SK 不能为空")
 
-    data = {"ak": ak, "sk": sk}
+    data = _read_file()
+    data.pop("ak", None)
+    data.pop("sk", None)
+    data["credential_source"] = "environment"
     if product_id:
         data["product_id"] = product_id
     if pod_id:
         data["pod_id"] = pod_id
 
-    return _write_file(data)
+    path = _write_file(data)
+    if LEGACY_CREDENTIALS_FILE != path and LEGACY_CREDENTIALS_FILE.exists():
+        LEGACY_CREDENTIALS_FILE.unlink()
+    return path
 
 
 def set_default_device(product_id: str, pod_id: str) -> Path:
@@ -127,13 +159,10 @@ def set_default_device(product_id: str, pod_id: str) -> Path:
         pod_id: 云手机实例 ID
 
     Returns:
-        保存的文件路径; AK/SK 未配置时抛 ValueError
+        保存的文件路径
     """
     if not product_id or not pod_id:
         raise ValueError("ProductId/PodId 不能为空")
-    if not has_credentials():
-        raise ValueError("请先配置 AK/SK 凭证 (mua setup)")
-
     data = _read_file()
     data["product_id"] = product_id
     data["pod_id"] = pod_id
@@ -159,15 +188,17 @@ def get_default_device() -> Tuple[str, str]:
 
 
 def delete_credentials() -> bool:
-    """删除已保存的凭证
+    """删除非敏感配置和旧版明文凭证文件。
 
     Returns:
         是否成功删除 (文件不存在时返回 False)
     """
-    if CREDENTIALS_FILE.exists():
-        CREDENTIALS_FILE.unlink()
-        return True
-    return False
+    removed = False
+    for path in (CREDENTIALS_FILE, LEGACY_CREDENTIALS_FILE):
+        if path.exists():
+            path.unlink()
+            removed = True
+    return removed
 
 
 def mask_secret(secret: str, show_prefix: int = 4, show_suffix: int = 4) -> str:
@@ -213,29 +244,28 @@ def mask_id(id_str: str, show_head: int = 6, show_tail: int = 4) -> str:
 
 
 def get_credentials_interactive(force_setup: bool = False) -> Tuple[str, str]:
-    """获取凭证: 优先从本地加载, 首次使用(或强制重配)时交互式输入并保存
+    """获取凭证：优先读取环境变量，交互输入只在当前进程使用。
 
     Args:
-        force_setup: True 表示忽略已保存凭证, 强制重新输入
+        force_setup: True 表示忽略环境变量并强制重新输入
 
     Returns:
         (ak, sk) 元组
     """
-    # 尝试加载已保存的凭证
+    # 尝试从环境变量加载凭证。
     if not force_setup:
-        saved = load_credentials()
-        if saved:
-            ak, sk = saved
-            print(f"[凭证] 已加载本地配置: {mask_secret(ak)}")
-            print(f"[凭证] 文件位置: {CREDENTIALS_FILE}")
+        loaded = load_credentials()
+        if loaded:
+            ak, sk = loaded
+            print(f"[凭证] 已从环境变量加载: {mask_secret(ak)}")
             return ak, sk
 
     # 首次使用或强制重配: 交互式输入
     if force_setup:
-        print("\n--- 重新配置火山引擎凭证 ---")
+        print("\n--- 临时输入火山引擎凭证 ---")
     else:
-        print("\n--- 首次使用: 配置火山引擎凭证 (仅此一次) ---")
-        print("凭证将保存到本地, 后续运行自动加载。")
+        print("\n--- 首次使用: 输入火山引擎凭证 ---")
+        print("AK/SK 只在当前进程使用，不会写入磁盘。")
 
     print("获取方式: 火山引擎控制台 -> 右上角头像 -> 访问密钥\n")
 
@@ -252,17 +282,13 @@ def get_credentials_interactive(force_setup: bool = False) -> Tuple[str, str]:
 
         # 确认
         print(f"\nAK: {mask_secret(ak)}")
-        confirm = input("确认保存? [Y/n]: ").strip().lower()
+        confirm = input("确认用于本次会话? [Y/n]: ").strip().lower()
         if confirm in ("", "y", "yes"):
             break
         print("请重新输入。\n")
 
-    # 保存到本地
-    try:
-        path = save_credentials(ak, sk)
-        print(f"\n[成功] 凭证已保存到: {path}")
-        print("[提示] 如需重新配置, 运行: python cli.py setup\n")
-    except Exception as e:
-        print(f"\n[警告] 凭证保存失败 ({e}), 本次会话仍可继续使用")
+    print("\n[安全] AK/SK 未写入磁盘。长期使用请通过凭证代理注入环境变量：")
+    print("       VOLC_ACCESSKEY / VOLC_SECRETKEY")
+    save_credentials(ak, sk)
 
     return ak, sk
