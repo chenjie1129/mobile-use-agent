@@ -187,7 +187,7 @@ _EXTRA_ERRORS = [
     (401, "RequestExpired", "request expired",
      "请求签名已过期", "检查本机系统时间是否准确", CATEGORY_AUTH, False),
     (401, "Unauthorized", "unauthorized",
-     "请求未授权", "运行 python cli.py setup 重新配置凭证", CATEGORY_AUTH, False),
+     "请求未授权", "检查凭证代理注入的环境变量", CATEGORY_AUTH, False),
     (403, "SignatureDoesNotMatch", "signature does not match",
      "请求签名不匹配", "检查 AK/SK 是否配置正确, 重新运行 python cli.py setup",
      CATEGORY_AUTH, False),
@@ -196,7 +196,7 @@ _EXTRA_ERRORS = [
      "检查账号是否开通云手机 Mobile Use Agent 服务, 以及子账号权限配置",
      CATEGORY_AUTH, False),
     (401, "InvalidAccessKey", "invalid access key",
-     "AK/SK 无效或已被禁用", "运行 python cli.py setup 重新配置凭证",
+     "AK/SK 无效或已被禁用", "更新凭证代理中的 AK/SK 环境变量",
      CATEGORY_AUTH, False),
 ]
 
@@ -537,11 +537,11 @@ FRIENDLY_ACTIONS = {
     ),
     "InvalidAccessKey": (
         "填写的密钥不对，或者密钥已被停用",
-        "运行 mua setup 重新填写 AK/SK；还不行就去火山引擎控制台确认密钥状态",
+        "更新凭证代理中的 AK/SK；还不行就去火山引擎控制台确认密钥状态",
     ),
     "SignatureDoesNotMatch": (
         "密钥好像复制得不完整，或前后带了空格",
-        "运行 mua setup 重新粘贴 AK/SK，注意前后不要留空格",
+        "更新凭证代理中的 AK/SK，注意前后不要留空格",
     ),
     "AccessDenied": (
         "这个账号没有使用云手机服务的权限",
@@ -549,7 +549,7 @@ FRIENDLY_ACTIONS = {
     ),
     "Unauthorized": (
         "登录凭证有问题",
-        "运行 mua setup 重新配置 AK/SK",
+        "检查 VOLC_ACCESSKEY/VOLC_SECRETKEY 是否已正确注入",
     ),
     "RequestExpired": (
         "请求签名过期了，通常是电脑系统时间不准",
@@ -656,7 +656,7 @@ FRIENDLY_ACTIONS = {
 _CATEGORY_FRIENDLY = {
     CATEGORY_AUTH: (
         "登录或权限方面出了问题",
-        "按提示检查密钥和授权；可以用 mua setup 重新配置",
+        "按提示检查凭证代理、环境变量和服务授权",
     ),
     CATEGORY_RESOURCE: (
         "云手机资源方面出了问题",

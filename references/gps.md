@@ -74,7 +74,12 @@
 
 **适用场景**：需要精确位置的场景（导航、精确打卡），本机在 macOS 上运行。
 
-**依赖**：`pyobjc-framework-CoreLocation`（requirements.txt 已包含，仅 macOS 安装）+ 终端定位权限。
+**依赖**：`pyobjc-framework-CoreLocation` + 终端定位权限。该依赖是可选项，
+避免阻断核心 CLI 安装：
+
+```sh
+pip install -r requirements-location-macos.txt
+```
 
 **授权方式**：首次运行触发系统授权弹窗；也可手动开启：
 `系统设置 → 隐私与安全性 → 定位服务 → 终端（或你的终端 App）`

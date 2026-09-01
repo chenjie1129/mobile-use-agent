@@ -52,6 +52,7 @@ logger = logging.getLogger(__name__)
 SERVICE = "ipaas"
 VERSION = "2023-08-01"
 REGION = "cn-north-1"
+TERMINAL_TASK_STATUSES = {3, 5, 6, 7}
 
 
 # ========================
@@ -75,6 +76,21 @@ def extract_results(step_resp: Any) -> List[Dict[str, Any]]:
     if not isinstance(results, list):
         return []
     return [r for r in results if isinstance(r, dict)]
+
+
+def extract_task_status(step_resp: Any) -> Optional[int]:
+    """Extract the task lifecycle status from either supported response envelope."""
+    if not isinstance(step_resp, dict):
+        return None
+    status = step_resp.get("Status")
+    if status is None:
+        inner = step_resp.get("Result")
+        if isinstance(inner, dict):
+            status = inner.get("Status")
+    try:
+        return int(status) if status is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def format_step(step: Dict[str, Any], index: int = 0) -> str:
@@ -641,7 +657,7 @@ class MobileUseAgentClient:
 
         # 2. 轮询当前步骤 (增量打印, 每步只输出一次)
         start_time = time.time()
-        max_wait = max(timeout + 60, 3600)  # 最多等待 timeout+60s
+        max_wait = timeout + 60
         seen_count = 0  # 已打印的步骤数
 
         while True:
@@ -651,8 +667,10 @@ class MobileUseAgentClient:
                 break
 
             time.sleep(poll_interval)
+            task_status = None
             try:
                 step_resp = self.list_agent_run_current_step(run_id)
+                task_status = extract_task_status(step_resp)
                 results = extract_results(step_resp)
                 # 增量打印: 只打印新出现的步骤
                 if len(results) > seen_count:
@@ -669,7 +687,10 @@ class MobileUseAgentClient:
             except Exception as e:
                 print(f"  [{elapsed}s] 轮询异常: {e}")
 
-            # 检查任务是否完成 (GetAgentResult.IsSuccess)
+            if task_status not in TERMINAL_TASK_STATUSES:
+                continue
+
+            # 仅在服务端进入终态后获取最终结果
             try:
                 result = self.get_agent_result(run_id)
                 if isinstance(result, dict):

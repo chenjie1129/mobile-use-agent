@@ -62,7 +62,7 @@ if ! "$VENV_DIR/bin/python" -c "import volcenginesdkcore" >/dev/null 2>&1; then
       "$TMP_DEP/wheel" "$TMP_DEP/slim" || return 1
     echo "      [c] 安装精简 SDK 及依赖 (certifi/python-dateutil/six/urllib3)..."
     "$VENV_DIR/bin/pip" install "$TMP_DEP/slim/"*.whl || return 1
-    # 其余依赖 (Pillow / pyobjc 等, 都是小包; 注释和空行 pip 会自动忽略)
+    # 核心依赖（可选的 macOS CoreLocation 依赖需单独安装）
     grep -viE '^[[:space:]]*volcengine-python-sdk' "$SCRIPT_DIR/requirements.txt" \
       > "$TMP_DEP/req-rest.txt" 2>/dev/null || true
     if [ -s "$TMP_DEP/req-rest.txt" ]; then
@@ -107,5 +107,5 @@ echo ""
 echo "安装完成! 依赖已装入独立环境, 不影响系统 Python。"
 echo "试试:"
 echo "   mua whoami    # 查看凭证状态"
-echo "   mua setup     # 配置 AK/SK (首次使用)"
+echo "   mua setup     # 检查环境变量凭证并配置默认设备"
 echo "   mua run       # 问答式向导运行任务"

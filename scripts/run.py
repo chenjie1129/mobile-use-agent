@@ -3,8 +3,8 @@
 Mobile Use Agent - 快速运行脚本
 
 凭证策略:
-  - AK/SK: 首次运行时配置并保存到本地, 后续自动加载
-  - ProductId / PodId / 用户提示词: 每次运行时输入
+  - AK/SK: 从环境变量读取，交互输入仅用于当前进程
+  - ProductId / PodId: 自动发现唯一可用设备
 """
 
 import sys
@@ -14,6 +14,8 @@ import json
 # 同目录导入
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from mobile_use_agent import MobileUseAgentClient, format_result
+from cloud_phone import VePhoneClient
+from device_orchestrator import DeviceOrchestrator
 from error_codes import MobileUseError, format_error, CATEGORY_AUTH
 from credential_store import get_credentials_interactive
 from geo import ask_location_permission, acquire_gps
@@ -43,14 +45,15 @@ def _main():
     ak, sk = get_credentials_interactive()
     client = MobileUseAgentClient(ak=ak, sk=sk)
 
-    # 2. 每次运行都要输入的参数
-    print("\n--- 云手机实例配置 ---")
-    product_id = input("请输入 ProductId (云手机业务 ID): ").strip()
-    pod_id = input("请输入 PodId (云手机实例 ID): ").strip()
-
-    if not product_id or not pod_id:
-        print("[错误] ProductId/PodId 不能为空!")
-        sys.exit(1)
+    # 2. 自动发现唯一可用设备；歧义或缺失时返回下一步。
+    device = DeviceOrchestrator(
+        VePhoneClient(access_key=ak, secret_key=sk)
+    ).resolve()
+    if not device.ready:
+        print(json.dumps(device.to_dict(), ensure_ascii=False, indent=2))
+        sys.exit(2)
+    product_id, pod_id = device.product_id, device.pod_id
+    print(f"[设备] ProductId={product_id} PodId={pod_id}")
 
     user_prompt = input("\n请输入用户提示词 (你想让 Agent 做什么): ").strip()
     if not user_prompt:

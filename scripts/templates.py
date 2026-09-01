@@ -14,6 +14,8 @@
 提示词刻意写得口语化、具体, 拿到就能演示。
 """
 
+from typing import Optional
+
 TASK_TEMPLATES = [
     # ---- 通用: 先试手, 零成本 (环境自检) ----
     {
@@ -112,7 +114,7 @@ def resolve_template(choice: str):
     return choice, None
 
 
-def format_template_menu(max_items: int | None = None) -> str:
+def format_template_menu(max_items: Optional[int] = None) -> str:
     """生成模板菜单文本 (按场景分组, 用于任务输入前的引导)
 
     Args:

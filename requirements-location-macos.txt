@@ -1,0 +1,2 @@
+# 可选：macOS 系统级精确定位。安装失败不影响 MUA 核心 CLI 和其他定位来源。
+pyobjc-framework-CoreLocation>=10.0; sys_platform == "darwin"

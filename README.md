@@ -106,8 +106,10 @@ Mobile Use Agent（简称 MUA）是火山引擎云手机上的一个 AI 助手�
 
 AI 会：
 
-1. 检测到你的云手机凭证尚未配置 → 引导你在终端运行一次 `mua setup`（只需一次）；
-2. 之后每次你只需描述任务，AI 自动调用云手机执行并回报结果。
+1. 从凭证代理注入的环境变量读取 AK/SK，不把密钥写入磁盘；
+2. 自动发现 MUA 业务和运行中的云手机；
+3. 若没有实例，返回可用规格、机房和明确的创建确认步骤；
+4. 设备就绪后执行任务并回报结果。
 
 **这是最省事的用法**：你只负责"说"，AI 负责"做"。
 
@@ -132,10 +134,14 @@ AI 会：
 ### 第 2 步 配置（一次性）
 
 ```bash
+export VOLC_ACCESSKEY="<由凭证代理注入>"
+export VOLC_SECRETKEY="<由凭证代理注入>"
 mua setup
 ```
 
-输入第 5 步拿到的 AK/SK（SK 输入时屏幕不显示，属正常）；程序会问是否保存"默认手机"，输入第 3/4 步的 ProductId/PodId 即可——之后就不用再填了。
+`mua setup` 只检查环境变量，并可保存非敏感的默认 ProductId/PodId。AK/SK
+不会写入项目目录或 `~/.mobile_use_agent`；生产环境应由 Secret Manager、
+CI Secret 或凭证代理注入。
 
 ### 第 3 步 运行任务
 
@@ -185,22 +191,26 @@ mua run
 ### 任务报错怎么办？
 
 - `ErrAssumeRoleFailed`：没做第 1 步授权，回 [第 1 步](#第-1-步-给云手机开权限约-2-分钟) 补授权；
-- `InvalidAccessKey`：AK/SK 不对或过期，运行 `mua setup` 重新配置；
+- `InvalidAccessKey`：AK/SK 不对或过期，更新凭证代理中的环境变量；
 - 提示实例未运行：回 [第 4 步](#第-4-步-订购云手机拿到-podid约-5-分钟含等待) 确认云手机处于"运行中"。
 
 ### 找不到 ProductId / PodId？
 
-`ProductId` 在 [MUA 控制台 → 业务管理](https://console.volcengine.com/ACEP/mua/)；`PodId` 在 [MUA 控制台 → 云手机资源](https://console.volcengine.com/ACEP/mua/)。找到后用 `mua setup` 存为默认手机，之后不用再找。
+通常不需要手工查找：运行 `mua resolve-device --agent-json` 会自动发现。若存在
+多个候选，按返回列表选择；若没有业务或实例，按结构化 `next_action` 创建。
 
 ---
 
 ## 六、常用命令速查
 
 ```bash
-mua setup          # 配置 AK/SK、默认手机（首次）
+mua setup          # 检查环境变量凭证、配置默认手机
 mua run            # 运行任务（问答式向导）
 mua whoami         # 查看凭证与默认手机状态
 mua device         # 查看默认手机（--clear 清除）
+mua resolve-device --agent-json  # 自动发现 Product/Pod，返回结构化下一步
+mua run --prompt "查看系统版本" --agent-json  # JSONL 实时任务事件
+mua phone-action ListPod --params-json '{"ProductId":"PID"}' --query
 mua status --run-id RUN_XXX    # 查询任务进度
 mua result --run-id RUN_XXX    # 获取任务结果
 mua cancel --run-id RUN_XXX    # 取消任务
@@ -228,7 +238,8 @@ from mobile_use_agent import MobileUseAgentClient
 from credential_store import load_profile    # {ak, sk, product_id, pod_id}
 ```
 
-凭证复用 `mua setup` 已保存的本地配置（权限 600），**代码中不出现任何密钥**。
+凭证只从 `VOLC_ACCESSKEY`/`VOLC_SECRETKEY` 环境变量读取；默认设备配置不含
+密钥。建议由企业凭证代理或 Secret Manager 注入环境变量。
 
 ### 方式一：注册为工具（function calling，推荐）
 
@@ -259,7 +270,7 @@ def operate_cloud_phone(prompt: str, product_id: str = "", pod_id: str = "") -> 
     product_id = product_id or profile["product_id"]   # 默认手机回退
     pod_id = pod_id or profile["pod_id"]
     if not product_id or not pod_id:
-        raise ValueError("缺少 ProductId/PodId：先运行 `mua setup` 保存默认手机，或调用时传入")
+        raise ValueError("缺少 ProductId/PodId：先运行 `mua resolve-device --agent-json`")
 
     return client.run_and_wait(
         run_name="agent-tool-task",
@@ -299,6 +310,58 @@ client.cancel_task(run_id)                            # 需要时取消
 
 更多参数（GPS 注入、TOS 截图、录屏、MCP 工具、输出 Schema）见 [scripts/examples.py](scripts/examples.py) 与 [references/api_reference.md](references/api_reference.md)。
 
+### ProductId / PodId 自动补全
+
+`mua run` 不再要求用户预先知道两个 ID：
+
+1. 有默认设备或显式参数：直接使用并校验归属。
+2. 只有一个 MUA 业务和一个运行中实例：自动选择并保存为默认设备。
+3. 有多个业务或实例：交互模式展示候选；非交互模式返回
+   `product_selection_required` 或 `pod_selection_required` JSON。
+4. 没有业务：返回 `product_required` 和控制台创建入口。业务开通涉及协议，
+   必须由用户在控制台完成。
+5. 有业务但没有实例：查询资源、规格和机房，返回
+   `pod_creation_required`。用户确认后可提交创建：
+
+```sh
+mua resolve-device \
+  --product-id PID \
+  --create-pod \
+  --configuration-code g3.pod8c24g.type2 \
+  --dc DC_ID \
+  --resource-type 200 \
+  --confirm-action CreatePodOneStep \
+  --agent-json
+```
+
+资源不足时需要订购，可能产生费用；只通过 P2 显式确认入口执行，不会由
+`mua run` 静默下单。
+
+### 云手机控制面
+
+通用入口覆盖官方 ACEP OpenAPI：
+
+```sh
+# P0 只读，不需要确认
+mua phone-action ListPod \
+  --params-json '{"ProductId":"PID","MaxResults":20}' --query
+
+# P1 状态变更，确认令牌必须与 Action 完全一致
+mua phone-action PowerOnPod \
+  --params-json '{"ProductId":"PID","PodIdList":["POD"]}' \
+  --confirm-action PowerOnPod
+
+# P2 高风险或计费操作
+mua phone-action DeletePod \
+  --params-json '{"ProductId":"PID","PodIdList":["POD"]}' \
+  --confirm-action DeletePod
+```
+
+- **P0**：实例、应用、资源、机房、镜像、网络、任务和指标查询。
+- **P1**：开关机、重启、应用安装/启停、备份恢复、录屏和代理配置。
+- **P2**：创建/删除/重置/迁移、资源订购、文件操作、ADB 和任意命令。
+- 未识别的新 Action 默认按 P2 处理，避免 API 新增后绕过门禁。
+
 ---
 
 ## 八、高级用法（开发者）
@@ -325,13 +388,17 @@ mobile-use-agent/
 ├── scripts/               # 可执行代码 + 可 import 的工具库
 │   ├── cli.py             # 交互式 CLI + 命令行模式 (主入口)
 │   ├── mobile_use_agent.py  # 核心客户端, 封装 10 个 OpenAPI
+│   ├── cloud_phone.py     # 官方 ACEP 控制面客户端 (Apache-2.0)
+│   ├── control_policy.py  # P0/P1/P2 动作风险门禁
+│   ├── device_orchestrator.py # Product/Pod 自动发现与准备
 │   ├── error_codes.py     # 错误码定义与解析
-│   ├── credential_store.py  # 凭证 + 默认手机持久化
+│   ├── credential_store.py  # 环境变量凭证 + 非敏感默认设备
 │   ├── geo.py             # 定位获取 (6 来源统一抽象 + 自动降级链)
 │   ├── make_slim_sdk.py   # 构建精简 SDK wheel (安装提速用, 见 install.sh)
 │   └── templates.py       # 示例任务模板
 ├── references/            # 按需加载的参考文档
 │   ├── commands.md        # 命令参考
+│   ├── control_plane.md   # 设备解析状态与风险分级
 │   ├── error_codes.md     # 错误码参考
 │   ├── gps.md             # GPS 注入参考
 │   └── api_reference.md   # OpenAPI 参考
@@ -342,4 +409,6 @@ mobile-use-agent/
 
 ## 许可证
 
-MIT
+项目主体使用 MIT License。`scripts/cloud_phone.py` 派生自 Apache-2.0
+许可的 `bytedance/agentkit-samples`，详见
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
